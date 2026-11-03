@@ -1,98 +1,233 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
+import { getStorageItem, setStorageItem } from '@/utils/storage';
+import { useEffect, useState } from 'react';
+import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { MaterialIcons } from '@expo/vector-icons';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { Colors, Spacing } from '@/constants/theme';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
+const API_BASE = process.env.EXPO_PUBLIC_API_BASE ?? '  https://scanner-carriers-karl-bacterial.trycloudflare.com/api';
+const PRIMARY = '#1d66a5';
+
+export default function LoginScreen() {
+  const router = useRouter();
+  const scheme = useColorScheme();
+  const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = await getStorageItem('access_token');
+        if (token) {
+          router.replace('/(tabs)/home');
+        }
+      } finally {
+        setChecking(false);
+        
+      }
+    })();
+  }, [router]);
+
+  const onSubmit = async () => {
+    if (!email.trim() || !password) {
+      setError('Enter Email and password.');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${API_BASE}/users/login/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), password: password.trim() }),
+      });
+      const raw = await response.text();
+      let data: any = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        data = {};
+      }
+      if (!response.ok) {
+        const message =
+          (typeof data?.details === 'string' && data.details) ||
+          (typeof data?.detail === 'string' && data.detail) ||
+          (raw ? `${response.status}: ${raw}` : `Login failed (${response.status}).`);
+        throw new Error(message);
+      }
+      if (data?.access) {
+        await setStorageItem('access_token', String(data.access));
+      }
+      if (data?.refresh) {
+        await setStorageItem('refresh_token', String(data.refresh));
+      }
+      router.replace('/(tabs)/home');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Login failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (checking) {
     return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
+      <View style={[styles.center, { backgroundColor: colors.background }]}>
+        <Text>Loading...</Text>
+      </View>
     );
   }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
+
   return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+      <View style={styles.container}>
+        <Image
+          source={require('@/assets/images/logo.png')}
+          style={styles.logo}
+          resizeMode="contain"
+        />
 
-export default function HomeScreen() {
-  return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
-          </ThemedText>
-        </ThemedView>
+        <Text style={styles.title}>Sign In</Text>
 
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
+        <View style={[styles.inputWrapper, { backgroundColor: colors.backgroundElement }]}>
+          <MaterialIcons name="email" size={20} color="rgba(0,0,0,0.5)" />
+          <TextInput
+            style={[styles.input, { color: colors.text }]}
+            placeholder="Email"
+            placeholderTextColor="rgba(0,0,0,0.5)"
+            autoCapitalize="none"
+            autoComplete="email"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+            editable={!loading}
           />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
+        </View>
 
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
+        <View style={[styles.inputWrapper, { backgroundColor: colors.backgroundElement }]}>
+          <MaterialIcons name="lock" size={20} color="rgba(0,0,0,0.5)" />
+          <TextInput
+            style={[styles.input, { color: colors.text }]}
+            placeholder="Password"
+            placeholderTextColor="rgba(0,0,0,0.5)"
+            secureTextEntry={!showPassword}
+            value={password}
+            onChangeText={setPassword}
+            editable={!loading}
+          />
+          <Pressable onPress={() => setShowPassword((v) => !v)}>
+            <MaterialIcons
+              name={showPassword ? 'visibility' : 'visibility-off'}
+              size={20}
+              color="rgba(0,0,0,0.5)"
+            />
+          </Pressable>
+        </View>
+
+        <Pressable style={styles.forgot} onPress={() => {}}>
+          <Text style={styles.forgotText}>Forgot Password?</Text>
+        </Pressable>
+
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+
+        <Pressable
+          style={[styles.button, loading && styles.disabled]}
+          onPress={onSubmit}
+          disabled={loading}>
+          <Text style={styles.buttonText}>{loading ? 'Signing in...' : 'Sign In'}</Text>
+        </Pressable>
+
+        <View style={styles.registerRow}>
+          <Text style={{ color: colors.text }}>Don&apos;t have an account? </Text>
+          <Pressable onPress={() => {}}>
+            <Text style={styles.registerText}>Register</Text>
+          </Pressable>
+        </View>
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: { flex: 1 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   container: {
     flex: 1,
     justifyContent: 'center',
-    flexDirection: 'row',
+    paddingHorizontal: 20,
+    gap: Spacing.two,
   },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
-  },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
+  logo: {
+    width: 250,
+    height: 120,
+    alignSelf: 'center',
+    marginBottom: Spacing.four,
   },
   title: {
+    fontSize: 20,
+    color: PRIMARY,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: Spacing.two,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Spacing.two,
+  },
+  input: {
+    flex: 1,
+    fontSize: 16,
+    paddingVertical: Spacing.one,
+  },
+  forgot: {
+    alignSelf: 'flex-end',
+  },
+  forgotText: {
+    color: '#232323',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  button: {
+    backgroundColor: PRIMARY,
+    paddingVertical: Spacing.three,
+    borderRadius: Spacing.two,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    marginTop: Spacing.four,
+  },
+  buttonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  error: {
+    color: '#EF2F2F',
+    fontSize: 13,
     textAlign: 'center',
   },
-  code: {
-    textTransform: 'uppercase',
+  registerRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: Spacing.two,
   },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+  registerText: {
+    color: PRIMARY,
+    fontWeight: '700',
+  },
+  disabled: {
+    opacity: 0.6,
   },
 });
