@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -862,8 +863,11 @@ export default function OnboardingScreen() {
       });
       if (!response.ok) throw new Error(apiError(response, 'Unable to submit application'));
       await deleteLocalStorageItem(DRAFT_KEY);
-      await clearSession();
-      router.replace('/(auth)/sign-in');
+      // Keep the authenticated session; unverified users stay on onboarding with a pending notice.
+      useAuthStore.getState().setSessionStatus('pending');
+      setNotice(
+        'Application submitted successfully. Your account is awaiting administrator verification. Please contact an administrator if verification is still pending.',
+      );
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Unable to submit application.');
       throw saveError;
@@ -1055,7 +1059,12 @@ export default function OnboardingScreen() {
     setError(null);
     try {
       await persistDraft({ sectionIndex });
-      router.replace('/(tabs)/home');
+      await clearSession();
+      Alert.alert(
+        'Progress saved',
+        'Your onboarding progress is saved on this device. Sign in again anytime to continue.',
+        [{ text: 'OK', onPress: () => router.replace('/(auth)/sign-in') }],
+      );
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Unable to save your progress.');
     }

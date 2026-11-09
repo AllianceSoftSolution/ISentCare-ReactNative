@@ -77,11 +77,14 @@ export default function LoginScreen() {
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}>
-        <Image
-          source={require('@/assets/images/logo.png')}
-          style={styles.logo}
-          resizeMode="contain"
-        />
+        <View style={styles.logoWrap}>
+          <Image
+            accessibilityLabel="IsentCare"
+            source={require('@/assets/images/isent-care-logo-white.png')}
+            style={styles.logo}
+            resizeMode="contain"
+          />
+        </View>
 
         <Text style={styles.title}>Welcome back</Text>
         <Text style={styles.subtitle}>Sign in to continue to IsentCare.</Text>
@@ -166,11 +169,20 @@ const styles = StyleSheet.create({
     maxWidth: 560,
     alignSelf: 'center',
   },
-  logo: {
-    width: 230,
-    height: 100,
+  logoWrap: {
     alignSelf: 'center',
+    width: '100%',
+    maxWidth: 280,
+    borderRadius: 12,
+    backgroundColor: PRIMARY,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.three,
     marginBottom: Spacing.two,
+  },
+  logo: {
+    width: 210,
+    height: 88,
   },
   title: {
     fontSize: 24,

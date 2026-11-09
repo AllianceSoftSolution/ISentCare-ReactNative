@@ -67,7 +67,8 @@ function responseError(data: unknown, fallback: string): string {
 export async function login(email: string, password: string): Promise<LoginResult> {
   const response = await apiClient.post('/users/login/', {
     email: email.trim(),
-    password: password.trim(),
+    // Keep password exactly as entered so it matches registration (which does not trim).
+    password,
   });
 
   const data = (response.data ?? {}) as LoginResult;

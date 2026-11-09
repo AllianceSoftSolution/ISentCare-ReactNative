@@ -101,7 +101,13 @@ export default function HomeScreen() {
         { latitude: prompt.latitude, longitude: prompt.longitude },
         tookBreak,
       );
-      setShifts((current) => current.filter((item) => item.id !== prompt.shift.id));
+      try {
+        const results = await fetchTodayShifts();
+        setShifts(results);
+      } catch {
+        // Punch-out succeeded; fall back to local removal if the refresh fails.
+        setShifts((current) => current.filter((item) => item.id !== prompt.shift.id));
+      }
       setNotice({
         title: 'Shift ended',
         message: tookBreak
