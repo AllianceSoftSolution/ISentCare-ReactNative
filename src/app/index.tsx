@@ -1,233 +1,89 @@
-import { useRouter } from 'expo-router';
-import { getStorageItem, setStorageItem } from '@/utils/storage';
 import { useEffect, useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialIcons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
+import { restoreSession } from '@/api/session';
 
-import { useColorScheme } from '@/hooks/use-color-scheme';
-import { Colors, Spacing } from '@/constants/theme';
-
-const API_BASE = process.env.EXPO_PUBLIC_API_BASE ?? '  https://scanner-carriers-karl-bacterial.trycloudflare.com/api';
-const PRIMARY = '#1d66a5';
-
-export default function LoginScreen() {
+export default function StartupScreen() {
   const router = useRouter();
-  const scheme = useColorScheme();
-  const colors = Colors[scheme === 'dark' ? 'dark' : 'light'];
-
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    (async () => {
+    let active = true;
+
+    const initialize = async () => {
       try {
-        const token = await getStorageItem('access_token');
-        if (token) {
+        const status = await restoreSession(true);
+        await minimumSplashTime;
+        if (!active) return;
+        if (status === 'verified') {
           router.replace('/(tabs)/home');
+        } else if (status === 'signedOut') {
+          router.replace('/(auth)/get-started');
+        } else {
+          router.replace('/(auth)/onboarding');
         }
-      } finally {
-        setChecking(false);
-        
+      } catch (initializationError) {
+        if (active) {
+          setError(
+            initializationError instanceof Error
+              ? initializationError.message
+              : 'Unable to check your session. Please try again.',
+          );
+        }
       }
-    })();
-  }, [router]);
+    };
 
-  const onSubmit = async () => {
-    if (!email.trim() || !password) {
-      setError('Enter Email and password.');
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch(`${API_BASE}/users/login/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim(), password: password.trim() }),
-      });
-      const raw = await response.text();
-      let data: any = {};
-      try {
-        data = raw ? JSON.parse(raw) : {};
-      } catch {
-        data = {};
-      }
-      if (!response.ok) {
-        const message =
-          (typeof data?.details === 'string' && data.details) ||
-          (typeof data?.detail === 'string' && data.detail) ||
-          (raw ? `${response.status}: ${raw}` : `Login failed (${response.status}).`);
-        throw new Error(message);
-      }
-      if (data?.access) {
-        await setStorageItem('access_token', String(data.access));
-      }
-      if (data?.refresh) {
-        await setStorageItem('refresh_token', String(data.refresh));
-      }
-      router.replace('/(tabs)/home');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Login failed.');
-    } finally {
-      setLoading(false);
-    }
-  };
+    const minimumSplashTime = new Promise((resolve) => setTimeout(resolve, 450));
+    void initialize();
 
-  if (checking) {
-    return (
-      <View style={[styles.center, { backgroundColor: colors.background }]}>
-        <Text>Loading...</Text>
-      </View>
-    );
-  }
+    return () => {
+      active = false;
+    };
+  }, [attempt, router]);
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+    <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
         <Image
-          source={require('@/assets/images/logo.png')}
+          accessibilityLabel="IsentCare Healthcare Staffing"
+          source={require('@/assets/images/isent-care-logo-white.png')}
           style={styles.logo}
           resizeMode="contain"
         />
-
-        <Text style={styles.title}>Sign In</Text>
-
-        <View style={[styles.inputWrapper, { backgroundColor: colors.backgroundElement }]}>
-          <MaterialIcons name="email" size={20} color="rgba(0,0,0,0.5)" />
-          <TextInput
-            style={[styles.input, { color: colors.text }]}
-            placeholder="Email"
-            placeholderTextColor="rgba(0,0,0,0.5)"
-            autoCapitalize="none"
-            autoComplete="email"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-            editable={!loading}
-          />
-        </View>
-
-        <View style={[styles.inputWrapper, { backgroundColor: colors.backgroundElement }]}>
-          <MaterialIcons name="lock" size={20} color="rgba(0,0,0,0.5)" />
-          <TextInput
-            style={[styles.input, { color: colors.text }]}
-            placeholder="Password"
-            placeholderTextColor="rgba(0,0,0,0.5)"
-            secureTextEntry={!showPassword}
-            value={password}
-            onChangeText={setPassword}
-            editable={!loading}
-          />
-          <Pressable onPress={() => setShowPassword((v) => !v)}>
-            <MaterialIcons
-              name={showPassword ? 'visibility' : 'visibility-off'}
-              size={20}
-              color="rgba(0,0,0,0.5)"
-            />
-          </Pressable>
-        </View>
-
-        <Pressable style={styles.forgot} onPress={() => {}}>
-          <Text style={styles.forgotText}>Forgot Password?</Text>
-        </Pressable>
-
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
-        <Pressable
-          style={[styles.button, loading && styles.disabled]}
-          onPress={onSubmit}
-          disabled={loading}>
-          <Text style={styles.buttonText}>{loading ? 'Signing in...' : 'Sign In'}</Text>
-        </Pressable>
-
-        <View style={styles.registerRow}>
-          <Text style={{ color: colors.text }}>Don&apos;t have an account? </Text>
-          <Pressable onPress={() => {}}>
-            <Text style={styles.registerText}>Register</Text>
-          </Pressable>
-        </View>
+        {error ? (
+          <View style={styles.errorPanel}>
+            <Text style={styles.errorTitle}>We couldn’t check your session</Text>
+            <Text style={styles.errorText}>{error}</Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                setError(null);
+                setAttempt((value) => value + 1);
+              }}>
+              <Text style={styles.retry}>Try again</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <>
+            <ActivityIndicator size="large" color="#1d66a5" />
+            <Text style={styles.loadingText}>Loading your account…</Text>
+          </>
+        )}
       </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-    gap: Spacing.two,
-  },
-  logo: {
-    width: 250,
-    height: 120,
-    alignSelf: 'center',
-    marginBottom: Spacing.four,
-  },
-  title: {
-    fontSize: 20,
-    color: PRIMARY,
-    fontWeight: '600',
-    textAlign: 'center',
-    marginBottom: Spacing.two,
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: Spacing.two,
-  },
-  input: {
-    flex: 1,
-    fontSize: 16,
-    paddingVertical: Spacing.one,
-  },
-  forgot: {
-    alignSelf: 'flex-end',
-  },
-  forgotText: {
-    color: '#232323',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  button: {
-    backgroundColor: PRIMARY,
-    paddingVertical: Spacing.three,
-    borderRadius: Spacing.two,
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-    marginTop: Spacing.four,
-  },
-  buttonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  error: {
-    color: '#EF2F2F',
-    fontSize: 13,
-    textAlign: 'center',
-  },
-  registerRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    marginTop: Spacing.two,
-  },
-  registerText: {
-    color: PRIMARY,
-    fontWeight: '700',
-  },
-  disabled: {
-    opacity: 0.6,
-  },
+  safeArea: { flex: 1, backgroundColor: '#000' },
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 24, paddingHorizontal: 24 },
+  // Match Flutter splash: square bounds so the full S mark + wordmark fit via contain.
+  logo: { width: 280, height: 280 },
+  loadingText: { color: '#fff', fontSize: 14, fontFamily: 'Poppins' },
+  errorPanel: { width: '100%', maxWidth: 400, alignItems: 'center', gap: 12 },
+  errorTitle: { color: '#fff', fontSize: 17, fontWeight: '700', textAlign: 'center', fontFamily: 'Poppins' },
+  errorText: { color: '#fff', fontSize: 14, textAlign: 'center', fontFamily: 'Poppins' },
+  retry: { color: '#fff', fontSize: 15, fontWeight: '700', padding: 8, fontFamily: 'Poppins' },
 });
