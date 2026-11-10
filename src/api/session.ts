@@ -1,4 +1,4 @@
-import apiClient from '@/api/apiClient';
+import apiClient, { setAuthToken } from '@/api/apiClient';
 import type { LoginResult } from '@/api/auth';
 import { formatApiFailure } from '@/api/work';
 import useAuthStore, { type SessionStatus } from '@/store/authStore';
@@ -50,6 +50,7 @@ export async function saveSessionTokens(tokens: LoginResult) {
   const store = useAuthStore.getState();
   store.setToken(tokens.access);
   store.setSessionStatus('unknown');
+  setAuthToken(tokens.access);
 }
 
 export async function clearSession() {
@@ -60,6 +61,7 @@ export async function clearSession() {
     deleteStorageItem(LEGACY_REFRESH_TOKEN_KEY),
   ]);
   useAuthStore.getState().logout();
+  setAuthToken(null);
 }
 
 export async function restoreSession(force = false): Promise<SessionStatus> {
@@ -83,6 +85,7 @@ export async function restoreSession(force = false): Promise<SessionStatus> {
     }
 
     useAuthStore.getState().setToken(token);
+    setAuthToken(token);
     const response = await apiClient.get<{ verified?: unknown }>('/users/my_profile/');
     if (!response.ok) {
       if (response.status === 401) {

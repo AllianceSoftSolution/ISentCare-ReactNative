@@ -1,5 +1,5 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState, type ElementRef } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -261,38 +261,35 @@ export default function ShiftsScreen() {
     ]);
   };
 
-  const shifts = tab === 'available' ? available : completed;
-  const loading = tab === 'available' ? availableLoading : completedLoading;
-  const error = tab === 'available' ? availableError : completedError;
-  const hasMore = tab === 'available' ? availableHasMore : completedHasMore;
-  const moreLoading = tab === 'available' ? availableMoreLoading : completedMoreLoading;
+  const pagerRef = useRef<ElementRef<typeof ScrollView>>(null);
+  const [pageWidth, setPageWidth] = useState(0);
 
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
-        <View style={styles.tabs}>
-          {([
-            ['available', 'Per Diem Shifts'],
-            ['completed', 'Completed Shifts'],
-          ] as const).map(([id, label]) => (
-            <Pressable
-              key={id}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: tab === id }}
-              onPress={() => setTab(id)}
-              style={[styles.tab, tab === id && styles.activeTab]}>
-              <Text style={[styles.tabText, tab === id && styles.activeTabText]}>{label}</Text>
-            </Pressable>
-          ))}
-        </View>
-        {tab === 'available' ? <DistanceSlider value={distance} onChange={setDistance} /> : null}
+  const goToTab = (next: ShiftTab, animated = true) => {
+    setTab(next);
+    if (pageWidth <= 0) return;
+    pagerRef.current?.scrollTo({
+      x: (next === 'available' ? 0 : 1) * pageWidth,
+      animated,
+    });
+  };
+
+  const renderTabBody = (type: ShiftTab) => {
+    const shifts = type === 'available' ? available : completed;
+    const loading = type === 'available' ? availableLoading : completedLoading;
+    const error = type === 'available' ? availableError : completedError;
+    const hasMore = type === 'available' ? availableHasMore : completedHasMore;
+    const moreLoading = type === 'available' ? availableMoreLoading : completedMoreLoading;
+
+    return (
+      <View style={[styles.page, pageWidth > 0 && { width: pageWidth }]}>
+        {type === 'available' ? <DistanceSlider value={distance} onChange={setDistance} /> : null}
         {error && shifts.length === 0 ? (
           <View style={styles.statusPanel}>
             <MaterialIcons name="wifi-off" size={26} color="#b42318" />
             <Text style={styles.errorText}>{error}</Text>
             <Pressable
               accessibilityRole="button"
-              onPress={tab === 'available' ? loadAvailable : loadCompleted}>
+              onPress={type === 'available' ? loadAvailable : loadCompleted}>
               <Text style={styles.retryText}>Try again</Text>
             </Pressable>
           </View>
@@ -306,10 +303,10 @@ export default function ShiftsScreen() {
           <View style={styles.statusPanel}>
             <MaterialIcons name="event-busy" size={34} color="#98a2b3" />
             <Text style={styles.emptyTitle}>
-              {tab === 'available' ? 'No shifts available nearby' : 'No completed shifts yet'}
+              {type === 'available' ? 'No shifts available nearby' : 'No completed shifts yet'}
             </Text>
             <Text style={styles.mutedText}>
-              {tab === 'available'
+              {type === 'available'
                 ? 'Try increasing your distance to see more opportunities.'
                 : 'Completed shifts will appear here.'}
             </Text>
@@ -319,13 +316,13 @@ export default function ShiftsScreen() {
             {error ? (
               <View style={styles.inlineError}>
                 <Text style={styles.errorText}>{error}</Text>
-                <Pressable accessibilityRole="button" onPress={() => void loadMore(tab)}>
+                <Pressable accessibilityRole="button" onPress={() => void loadMore(type)}>
                   <Text style={styles.retryText}>Try again</Text>
                 </Pressable>
               </View>
             ) : null}
             {shifts.map((shift) => (
-              tab === 'available' ? (
+              type === 'available' ? (
                 <Pressable key={shift.id} style={styles.card} onPress={() => openDetails(shift)}>
                   <View style={styles.cardTop}>
                     <View style={styles.facilityIcon}>
@@ -380,7 +377,7 @@ export default function ShiftsScreen() {
               <Pressable
                 accessibilityRole="button"
                 style={[styles.loadMore, moreLoading && styles.disabled]}
-                onPress={() => void loadMore(tab)}
+                onPress={() => void loadMore(type)}
                 disabled={moreLoading}>
                 {moreLoading
                   ? <ActivityIndicator color={FORM_PRIMARY} />
@@ -389,6 +386,60 @@ export default function ShiftsScreen() {
             ) : null}
           </ScrollView>
         )}
+      </View>
+    );
+  };
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.container}>
+        <View style={styles.tabs}>
+          {([
+            ['available', 'Per Diem Shifts'],
+            ['completed', 'Completed Shifts'],
+          ] as const).map(([id, label]) => (
+            <Pressable
+              key={id}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: tab === id }}
+              onPress={() => goToTab(id)}
+              style={[styles.tab, tab === id && styles.activeTab]}>
+              <Text style={[styles.tabText, tab === id && styles.activeTabText]}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <View
+          style={styles.pager}
+          onLayout={(event) => {
+            const width = event.nativeEvent.layout.width;
+            if (width > 0 && width !== pageWidth) {
+              setPageWidth(width);
+              requestAnimationFrame(() => {
+                pagerRef.current?.scrollTo({
+                  x: (tab === 'available' ? 0 : 1) * width,
+                  animated: false,
+                });
+              });
+            }
+          }}>
+          <ScrollView
+            ref={pagerRef}
+            horizontal
+            pagingEnabled
+            bounces={false}
+            decelerationRate="fast"
+            showsHorizontalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            style={styles.pager}
+            onMomentumScrollEnd={(event) => {
+              if (pageWidth <= 0) return;
+              const index = Math.round(event.nativeEvent.contentOffset.x / pageWidth);
+              setTab(index === 0 ? 'available' : 'completed');
+            }}>
+            {renderTabBody('available')}
+            {renderTabBody('completed')}
+          </ScrollView>
+        </View>
       </View>
       <SuccessTickModal
         visible={successVisible}
@@ -413,6 +464,8 @@ function Detail({ icon, value }: { icon: 'event' | 'schedule'; value: string }) 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#f7f9fc' },
   container: { flex: 1, width: '100%', maxWidth: 760, alignSelf: 'center', paddingHorizontal: 16, paddingTop: 12 },
+  pager: { flex: 1 },
+  page: { flex: 1 },
   tabs: { flexDirection: 'row', borderBottomWidth: 1, borderColor: '#e4e7ec' },
   tab: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 46, borderBottomWidth: 2, borderBottomColor: 'transparent' },
   activeTab: { borderBottomColor: FORM_PRIMARY },

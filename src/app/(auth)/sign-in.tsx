@@ -12,6 +12,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -20,9 +21,19 @@ import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Spacing } from '@/constants/theme';
 
 const PRIMARY = '#1d66a5';
+const LOGO_ASPECT_RATIO = 1280 / 313;
+const LOGO_MAX_WIDTH = 280;
+const LOGO_MIN_WIDTH = 160;
+const LOGO_HORIZONTAL_INSET = 64;
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { width: windowWidth } = useWindowDimensions();
+  const logoWidth = Math.max(
+    LOGO_MIN_WIDTH,
+    Math.min(LOGO_MAX_WIDTH, windowWidth - LOGO_HORIZONTAL_INSET),
+  );
+  const logoHeight = logoWidth / LOGO_ASPECT_RATIO;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -77,14 +88,12 @@ export default function LoginScreen() {
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}>
-        <View style={styles.logoWrap}>
-          <Image
-            accessibilityLabel="IsentCare"
-            source={require('@/assets/images/isent-care-logo-white.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-        </View>
+        <Image
+          accessibilityLabel="IsentCare Healthcare Staffing"
+          source={require('@/assets/images/logo.png')}
+          style={[styles.logo, { width: logoWidth, height: logoHeight }]}
+          resizeMode="contain"
+        />
 
         <Text style={styles.title}>Welcome back</Text>
         <Text style={styles.subtitle}>Sign in to continue to IsentCare.</Text>
@@ -169,20 +178,10 @@ const styles = StyleSheet.create({
     maxWidth: 560,
     alignSelf: 'center',
   },
-  logoWrap: {
-    alignSelf: 'center',
-    width: '100%',
-    maxWidth: 280,
-    borderRadius: 12,
-    backgroundColor: PRIMARY,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.three,
-    marginBottom: Spacing.two,
-  },
   logo: {
-    width: 210,
-    height: 88,
+    alignSelf: 'center',
+    maxWidth: '100%',
+    marginBottom: Spacing.one,
   },
   title: {
     fontSize: 24,

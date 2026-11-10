@@ -16,15 +16,23 @@ if (!configuredBaseURL) {
 const apiOrigin = configuredBaseURL.replace(/\/api$/, '');
 const baseURL = `${apiOrigin}/api`;
 
-const apiClient = create({ baseURL });
-const professionalApiClient = create({ baseURL: `${apiOrigin}/professional/api` });
+// Keep cookie credentials off so Django SessionAuthentication cannot
+// enforce CSRF on JWT/API requests from the mobile/web clients.
+const apiClient = create({ baseURL, withCredentials: false });
+const professionalApiClient = create({
+  baseURL: `${apiOrigin}/professional/api`,
+  withCredentials: false,
+});
 
 for (const client of [apiClient, professionalApiClient]) {
   client.addRequestTransform((request) => {
-    const authToken = useAuthStore.getState().token;
-    if (!authToken) return;
     request.headers = request.headers || {};
-    request.headers.authorization = 'Bearer ' + authToken;
+    const authToken = useAuthStore.getState().token;
+    if (authToken) {
+      request.headers.authorization = 'Bearer ' + authToken;
+    } else if (request.headers.authorization) {
+      delete request.headers.authorization;
+    }
   });
 
   client.addResponseTransform((response) => {
@@ -41,8 +49,10 @@ for (const client of [apiClient, professionalApiClient]) {
 function setAuthToken(token: string | null) {
   if (token) {
     apiClient.setHeader('authorization', `Bearer ${token}`);
+    professionalApiClient.setHeader('authorization', `Bearer ${token}`);
   } else {
     apiClient.deleteHeader('authorization');
+    professionalApiClient.deleteHeader('authorization');
   }
 }
 

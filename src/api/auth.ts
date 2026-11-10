@@ -1,4 +1,5 @@
-import apiClient from './apiClient';
+import apiClient, { setAuthToken } from './apiClient';
+import useAuthStore from '@/store/authStore';
 import { appendUpload, type SelectedUpload } from '@/utils/upload';
 
 export type LoginResult = {
@@ -65,6 +66,10 @@ function responseError(data: unknown, fallback: string): string {
 }
 
 export async function login(email: string, password: string): Promise<LoginResult> {
+  // Ensure login is a clean unauthenticated JWT request (avoids CSRF from stale sessions).
+  setAuthToken(null);
+  useAuthStore.getState().logout();
+
   const response = await apiClient.post('/users/login/', {
     email: email.trim(),
     // Keep password exactly as entered so it matches registration (which does not trim).
@@ -136,6 +141,8 @@ export async function register(
   Object.entries(payload).forEach(([key, value]) => {
     formData.append(key, String(value));
   });
+  // Skip Django session login on signup so later JWT login is not blocked by CSRF.
+  formData.append('app', '1');
   if (idImage) {
     appendUpload(formData, 'dp', idImage);
   }

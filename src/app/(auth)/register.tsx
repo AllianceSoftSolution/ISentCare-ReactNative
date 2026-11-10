@@ -29,10 +29,15 @@ import {
   RegistrationStepper,
 } from '@/components/ui/RegistrationFields';
 import type { SelectedUpload } from '@/utils/upload';
+import {
+  fetchAddressSuggestions,
+  fetchPlaceAddressDetails,
+  hasPlacesApiKey,
+  type AddressSuggestion,
+} from '@/api/places';
 import { MaterialIcons } from '@expo/vector-icons';
 
 type StateOption = { id: number; name: string };
-type AddressSuggestion = { id: string; label: string };
 const SIGNUP_OTP_TTL_SECONDS = 5 * 60;
 
 export default function RegisterScreen() {
@@ -91,13 +96,12 @@ export default function RegisterScreen() {
   useEffect(() => {
     let active = true;
     const query = address.trim();
-    const apiKey = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY?.trim();
 
     if (otpSent || addressSelected || query.length < 3) {
       return;
     }
 
-    if (!apiKey) {
+    if (!hasPlacesApiKey()) {
       return;
     }
 
@@ -106,34 +110,8 @@ export default function RegisterScreen() {
       setAddressSearchLoading(true);
       setAddressSearchError(null);
       try {
-        const response = await fetch('https://places.googleapis.com/v1/places:autocomplete', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': apiKey,
-            'X-Goog-FieldMask': 'suggestions.placePrediction.placeId,suggestions.placePrediction.text',
-          },
-          body: JSON.stringify({ input: query }),
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          throw new Error(`Address lookup failed (HTTP ${response.status}).`);
-        }
-        const result = (await response.json()) as {
-          suggestions?: {
-            placePrediction?: {
-              placeId?: string;
-              text?: { text?: string };
-            };
-          }[];
-        };
+        const suggestions = await fetchAddressSuggestions(query, controller.signal);
         if (!active) return;
-        const suggestions = (result.suggestions ?? []).flatMap((item) => {
-          const prediction = item.placePrediction;
-          const label = prediction?.text?.text;
-          const id = prediction?.placeId;
-          return label && id ? [{ id, label }] : [];
-        });
         setAddressSuggestions(suggestions);
       } catch (searchError) {
         if (!active || (searchError instanceof Error && searchError.name === 'AbortError')) return;
@@ -154,6 +132,53 @@ export default function RegisterScreen() {
       controller.abort();
     };
   }, [address, addressSelected, otpSent]);
+
+  const onSelectAddressSuggestion = async (suggestion: AddressSuggestion) => {
+    setAddress(suggestion.label);
+    setAddressSelected(true);
+    setAddressSuggestions([]);
+    setAddressSearchLoading(true);
+    setAddressSearchError(null);
+    Keyboard.dismiss();
+    try {
+      const details = await fetchPlaceAddressDetails(suggestion.id);
+      if (details.address) setAddress(details.address);
+      if (details.city) setCity(details.city);
+      if (details.zipCode) setZipCode(details.zipCode.replace(/\D/g, '').slice(0, 5));
+      if (details.stateLong || details.stateShort) {
+        const match = states.find((state) => (
+          state.name === details.stateLong || state.name === details.stateShort
+        ));
+        if (match) {
+          setSelectedState(match);
+        } else if (!states.length) {
+          // States may not be loaded yet; load and then match like the website form.
+          const response = await apiClient.get<StateOption[] | { results?: StateOption[] }>(
+            '/states/?page=1&page_size=500',
+          );
+          const data = response.data;
+          const nextStates = Array.isArray(data)
+            ? data
+            : Array.isArray(data?.results)
+              ? data.results
+              : [];
+          setStates(nextStates);
+          const loadedMatch = nextStates.find((state) => (
+            state.name === details.stateLong || state.name === details.stateShort
+          ));
+          if (loadedMatch) setSelectedState(loadedMatch);
+        }
+      }
+    } catch (detailsError) {
+      setAddressSearchError(
+        detailsError instanceof Error
+          ? `${detailsError.message} Address text was applied; fill city, state, and ZIP if needed.`
+          : 'Address text was applied; fill city, state, and ZIP if needed.',
+      );
+    } finally {
+      setAddressSearchLoading(false);
+    }
+  };
 
   const startOtpCountdown = () => {
     setAddressSearchLoading(false);
@@ -506,7 +531,7 @@ export default function RegisterScreen() {
                 setAddressSuggestions([]);
                 setAddressSearchLoading(false);
                 setAddressSearchError(
-                  value.trim().length >= 3 && !process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY?.trim()
+                  value.trim().length >= 3 && !hasPlacesApiKey()
                     ? 'Address suggestions are unavailable. Enter your full address manually.'
                     : null,
                 );
@@ -527,14 +552,7 @@ export default function RegisterScreen() {
                     key={suggestion.id}
                     accessibilityRole="button"
                     style={styles.suggestion}
-                    onPress={() => {
-                      setAddress(suggestion.label);
-                      setAddressSelected(true);
-                      setAddressSuggestions([]);
-                      setAddressSearchLoading(false);
-                      setAddressSearchError(null);
-                      Keyboard.dismiss();
-                    }}>
+                    onPress={() => void onSelectAddressSuggestion(suggestion)}>
                     <MaterialIcons name="place" size={19} color={FORM_PRIMARY} />
                     <Text style={styles.suggestionText}>{suggestion.label}</Text>
                   </Pressable>

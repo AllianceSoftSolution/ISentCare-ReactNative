@@ -33,6 +33,11 @@ import {
 } from '@/components/ui/RegistrationFields';
 import { appendUpload, multipartRequestConfig, type SelectedUpload } from '@/utils/upload';
 import { clearSession } from '@/api/session';
+import {
+  clearRegistrationDrafts,
+  fetchMobileOnboardingDraft,
+  saveMobileOnboardingDraft,
+} from '@/api/registrationDraft';
 import useAuthStore from '@/store/authStore';
 
 type Option = { id: number; name: string };
@@ -397,102 +402,136 @@ export default function OnboardingScreen() {
     sectionIndex,
   });
 
+  const applyDraft = useCallback((draft: Record<string, unknown>) => {
+    const text = (key: string) => (typeof draft[key] === 'string' ? draft[key] as string : '');
+    if (isOption(draft.selectedProfession)) setSelectedProfession(draft.selectedProfession);
+    setLicenseNumber(text('licenseNumber'));
+    if (typeof draft.isMultiState === 'boolean') setIsMultiState(draft.isMultiState);
+    if (Array.isArray(draft.licenseStates)) setLicenseStates(draft.licenseStates.filter(isOption));
+    if (isOption(draft.primaryState)) setPrimaryState(draft.primaryState);
+    setExpiryDate(text('expiryDate'));
+    setEmpCompany(text('empCompany'));
+    setEmpJobTitle(text('empJobTitle'));
+    setEmpSupervisor(text('empSupervisor'));
+    setEmpTelephone(digitsOnly(text('empTelephone')));
+    setEmpAddress(text('empAddress'));
+    setEmpDuration(decimalInput(text('empDuration'), 3));
+    setEmpLeaving(text('empLeaving'));
+    if (isOption(draft.eduCountry)) setEduCountry(draft.eduCountry);
+    setEduState(text('eduState'));
+    setEduInstitute(text('eduInstitute'));
+    setEduDegree(text('eduDegree'));
+    setEduMajors(text('eduMajors'));
+    setEduCity(text('eduCity'));
+    setEduDuration(decimalInput(text('eduDuration'), 3));
+    setEduGpa(boundedDecimalInput(text('eduGpa'), '', 1, 4));
+    if (draft.attachmentFiles && typeof draft.attachmentFiles === 'object') {
+      const savedFiles = draft.attachmentFiles as Record<string, unknown>;
+      setAttachmentFiles({
+        physical: restoreUpload(savedFiles.physical),
+        x_ray: restoreUpload(savedFiles.x_ray),
+        covid: restoreUpload(savedFiles.covid),
+        dementia: restoreUpload(savedFiles.dementia),
+        flue: restoreUpload(savedFiles.flue),
+        cpr: restoreUpload(savedFiles.cpr),
+        others: restoreUpload(savedFiles.others),
+      });
+    }
+    setCprExpiry(text('cprExpiry'));
+    setResume(restoreUpload(draft.resume));
+    if (['citizen_of_US', 'non_citizen_of_US', 'permanent_resident', 'noncitizen_authorized'].includes(String(draft.citizenship))) {
+      setCitizenship(draft.citizenship as typeof citizenship);
+    }
+    setUscis(text('uscis'));
+    setPassportNumber(text('passportNumber'));
+    setWorkAuthorizationExpiry(text('workAuthorizationExpiry'));
+    setEevDocumentExpiry(text('eevDocumentExpiry'));
+    if (draft.eevGroup === 'IA' || draft.eevGroup === 'AU' || draft.eevGroup === 'ID') setEevGroup(draft.eevGroup);
+    if (draft.eevCategory && typeof draft.eevCategory === 'object') {
+      const category = draft.eevCategory as AttachmentCategory;
+      if (typeof category.id === 'number' && typeof category.name === 'string') setEevCategory(category);
+    }
+    if (draft.eevSecondCategory && typeof draft.eevSecondCategory === 'object') {
+      const category = draft.eevSecondCategory as AttachmentCategory;
+      if (typeof category.id === 'number' && typeof category.name === 'string') setEevSecondCategory(category);
+    }
+    setEevFile(restoreUpload(draft.eevFile));
+    setEevSecondFile(restoreUpload(draft.eevSecondFile));
+    setEmergencyName(text('emergencyName'));
+    setEmergencyPhone(digitsOnly(text('emergencyPhone')));
+    setEmergencyAddress(text('emergencyAddress'));
+    setEmergencyRelationship(text('emergencyRelationship'));
+    setReferenceEmployer(text('referenceEmployer'));
+    setReferenceJobTitle(text('referenceJobTitle'));
+    setReferenceEmail(text('referenceEmail'));
+    setReferencePhone(digitsOnly(text('referencePhone')));
+    setReferencePosition(text('referencePosition'));
+    setReferenceContact(text('referenceContact'));
+    setReferenceName(text('referenceName'));
+    setReferenceSignature(text('referenceSignature'));
+    if (isSignatureStrokes(draft.referenceSignatureStrokes)) {
+      setReferenceSignatureStrokes(draft.referenceSignatureStrokes);
+    }
+    setSanctioned(text('sanctioned'));
+    setSanctionedExplain(text('sanctionedExplain'));
+    setPendingAction(text('pendingAction'));
+    setPendingActionExplain(text('pendingActionExplain'));
+    if (draft.submittedSections && typeof draft.submittedSections === 'object') {
+      setSubmittedSections(draft.submittedSections as Partial<Record<OnboardingSection, string>>);
+    }
+    if (typeof draft.sectionIndex === 'number' && draft.sectionIndex >= 0 && draft.sectionIndex < 8) {
+      setSectionIndex(draft.sectionIndex);
+    }
+  }, []);
+
   useEffect(() => {
     let active = true;
-    void getLocalStorageItem(DRAFT_KEY)
-      .then((stored) => {
-        if (!active || !stored) return;
-        const draft = JSON.parse(stored) as Record<string, unknown>;
-        const text = (key: string) => (typeof draft[key] === 'string' ? draft[key] as string : '');
-        if (isOption(draft.selectedProfession)) setSelectedProfession(draft.selectedProfession);
-        setLicenseNumber(text('licenseNumber'));
-        if (typeof draft.isMultiState === 'boolean') setIsMultiState(draft.isMultiState);
-        if (Array.isArray(draft.licenseStates)) setLicenseStates(draft.licenseStates.filter(isOption));
-        if (isOption(draft.primaryState)) setPrimaryState(draft.primaryState);
-        setExpiryDate(text('expiryDate'));
-        setEmpCompany(text('empCompany'));
-        setEmpJobTitle(text('empJobTitle'));
-        setEmpSupervisor(text('empSupervisor'));
-        setEmpTelephone(digitsOnly(text('empTelephone')));
-        setEmpAddress(text('empAddress'));
-        setEmpDuration(decimalInput(text('empDuration'), 3));
-        setEmpLeaving(text('empLeaving'));
-        if (isOption(draft.eduCountry)) setEduCountry(draft.eduCountry);
-        setEduState(text('eduState'));
-        setEduInstitute(text('eduInstitute'));
-        setEduDegree(text('eduDegree'));
-        setEduMajors(text('eduMajors'));
-        setEduCity(text('eduCity'));
-        setEduDuration(decimalInput(text('eduDuration'), 3));
-        setEduGpa(boundedDecimalInput(text('eduGpa'), '', 1, 4));
-        if (draft.attachmentFiles && typeof draft.attachmentFiles === 'object') {
-          const savedFiles = draft.attachmentFiles as Record<string, unknown>;
-          setAttachmentFiles({
-            physical: restoreUpload(savedFiles.physical),
-            x_ray: restoreUpload(savedFiles.x_ray),
-            covid: restoreUpload(savedFiles.covid),
-            dementia: restoreUpload(savedFiles.dementia),
-            flue: restoreUpload(savedFiles.flue),
-            cpr: restoreUpload(savedFiles.cpr),
-            others: restoreUpload(savedFiles.others),
-          });
+    void (async () => {
+      try {
+        const [localStored, serverDraft] = await Promise.all([
+          getLocalStorageItem(DRAFT_KEY),
+          fetchMobileOnboardingDraft().catch(() => null),
+        ]);
+        if (!active) return;
+
+        let localDraft: Record<string, unknown> | null = null;
+        if (localStored) {
+          try {
+            const parsed = JSON.parse(localStored) as unknown;
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              localDraft = parsed as Record<string, unknown>;
+            }
+          } catch {
+            localDraft = null;
+          }
         }
-        setCprExpiry(text('cprExpiry'));
-        setResume(restoreUpload(draft.resume));
-        if (['citizen_of_US', 'non_citizen_of_US', 'permanent_resident', 'noncitizen_authorized'].includes(String(draft.citizenship))) {
-          setCitizenship(draft.citizenship as typeof citizenship);
+
+        // Prefer the server draft (same behavior as the web app) so progress
+        // resumes after login on this or another device.
+        const draft = serverDraft ?? localDraft;
+        if (draft) {
+          applyDraft(draft);
+          if (serverDraft) {
+            await setLocalStorageItem(DRAFT_KEY, JSON.stringify(serverDraft)).catch(() => undefined);
+          }
+          setNotice('Your saved onboarding progress was restored. Continue where you left off.');
         }
-        setUscis(text('uscis'));
-        setPassportNumber(text('passportNumber'));
-        setWorkAuthorizationExpiry(text('workAuthorizationExpiry'));
-        setEevDocumentExpiry(text('eevDocumentExpiry'));
-        if (draft.eevGroup === 'IA' || draft.eevGroup === 'AU' || draft.eevGroup === 'ID') setEevGroup(draft.eevGroup);
-        if (draft.eevCategory && typeof draft.eevCategory === 'object') {
-          const category = draft.eevCategory as AttachmentCategory;
-          if (typeof category.id === 'number' && typeof category.name === 'string') setEevCategory(category);
+      } catch (loadError: unknown) {
+        if (active) {
+          setError(
+            loadError instanceof Error
+              ? `Unable to restore saved progress: ${loadError.message}`
+              : 'Unable to restore saved progress.',
+          );
         }
-        if (draft.eevSecondCategory && typeof draft.eevSecondCategory === 'object') {
-          const category = draft.eevSecondCategory as AttachmentCategory;
-          if (typeof category.id === 'number' && typeof category.name === 'string') setEevSecondCategory(category);
-        }
-        setEevFile(restoreUpload(draft.eevFile));
-        setEevSecondFile(restoreUpload(draft.eevSecondFile));
-        setEmergencyName(text('emergencyName'));
-        setEmergencyPhone(digitsOnly(text('emergencyPhone')));
-        setEmergencyAddress(text('emergencyAddress'));
-        setEmergencyRelationship(text('emergencyRelationship'));
-        setReferenceEmployer(text('referenceEmployer'));
-        setReferenceJobTitle(text('referenceJobTitle'));
-        setReferenceEmail(text('referenceEmail'));
-        setReferencePhone(digitsOnly(text('referencePhone')));
-        setReferencePosition(text('referencePosition'));
-        setReferenceContact(text('referenceContact'));
-        setReferenceName(text('referenceName'));
-        setReferenceSignature(text('referenceSignature'));
-        if (isSignatureStrokes(draft.referenceSignatureStrokes)) {
-          setReferenceSignatureStrokes(draft.referenceSignatureStrokes);
-        }
-        setSanctioned(text('sanctioned'));
-        setSanctionedExplain(text('sanctionedExplain'));
-        setPendingAction(text('pendingAction'));
-        setPendingActionExplain(text('pendingActionExplain'));
-        if (draft.submittedSections && typeof draft.submittedSections === 'object') {
-          setSubmittedSections(draft.submittedSections as Partial<Record<OnboardingSection, string>>);
-        }
-        if (typeof draft.sectionIndex === 'number' && draft.sectionIndex >= 0 && draft.sectionIndex < 8) {
-          setSectionIndex(draft.sectionIndex);
-        }
-      })
-      .catch((loadError: unknown) => {
-        if (active) setError(loadError instanceof Error ? `Unable to restore saved progress: ${loadError.message}` : 'Unable to restore saved progress.');
-      })
-      .finally(() => {
+      } finally {
         if (active) setDraftLoaded(true);
-      });
+      }
+    })();
     return () => {
       active = false;
     };
-  }, []);
+  }, [applyDraft]);
 
   useEffect(() => {
     if (!draftLoaded) return;
@@ -863,6 +902,7 @@ export default function OnboardingScreen() {
       });
       if (!response.ok) throw new Error(apiError(response, 'Unable to submit application'));
       await deleteLocalStorageItem(DRAFT_KEY);
+      await clearRegistrationDrafts().catch(() => undefined);
       // Keep the authenticated session; unverified users stay on onboarding with a pending notice.
       useAuthStore.getState().setSessionStatus('pending');
       setNotice(
@@ -1057,16 +1097,23 @@ export default function OnboardingScreen() {
 
   const saveAndContinueLater = async () => {
     setError(null);
+    setLoading(true);
     try {
-      await persistDraft({ sectionIndex });
+      const draft = { ...JSON.parse(draftJson) as Record<string, unknown>, sectionIndex };
+      await setLocalStorageItem(DRAFT_KEY, JSON.stringify(draft));
+      // Match the web app: persist to the server while still authenticated,
+      // then sign out so the next login resumes this onboarding form.
+      await saveMobileOnboardingDraft(draft);
       await clearSession();
       Alert.alert(
         'Progress saved',
-        'Your onboarding progress is saved on this device. Sign in again anytime to continue.',
+        'Your onboarding progress was saved. Sign in again to continue where you left off.',
         [{ text: 'OK', onPress: () => router.replace('/(auth)/sign-in') }],
       );
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Unable to save your progress.');
+    } finally {
+      setLoading(false);
     }
   };
 

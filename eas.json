@@ -17,13 +17,18 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_BASE_URL": "https://childrens-participating-drop-lewis.trycloudflare.com"
+        "EXPO_PUBLIC_API_BASE_URL": "https://isentcare.com",
+        "EXPO_PUBLIC_GOOGLE_PLACES_API_KEY": "AIzaSyDZRcJfJbJq6l4woUbEbmqN_t4QUkvCDIY"
       }
     },
     "production": {
       "autoIncrement": true,
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://isentcare.com",
+        "EXPO_PUBLIC_GOOGLE_PLACES_API_KEY": "AIzaSyDZRcJfJbJq6l4woUbEbmqN_t4QUkvCDIY"
       }
     }
   },
