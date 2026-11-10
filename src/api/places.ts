@@ -11,6 +11,8 @@ export type PlaceAddressDetails = {
   zipCode: string;
   stateLong: string;
   stateShort: string;
+  latitude?: number | null;
+  longitude?: number | null;
 };
 
 type GoogleAddressComponent = {
@@ -49,6 +51,7 @@ type GoogleMapsPlaces = {
         place: {
           formatted_address?: string;
           address_components?: GoogleAddressComponent[];
+          geometry?: { location?: { lat: () => number; lng: () => number } };
         } | null,
         status: string,
       ) => void,
@@ -57,7 +60,6 @@ type GoogleMapsPlaces = {
 };
 
 declare global {
-  // eslint-disable-next-line no-var
   var google: { maps?: { places?: GoogleMapsPlaces } } | undefined;
 }
 
@@ -84,7 +86,10 @@ function componentShortName(components: GoogleAddressComponent[], type: string) 
 function detailsFromComponents(
   formattedAddress: string,
   components: GoogleAddressComponent[],
+  location?: { lat?: () => number; lng?: () => number } | null,
 ): PlaceAddressDetails {
+  const latitude = typeof location?.lat === 'function' ? location.lat() : null;
+  const longitude = typeof location?.lng === 'function' ? location.lng() : null;
   return {
     address: formattedAddress.trim(),
     city:
@@ -94,6 +99,8 @@ function detailsFromComponents(
     zipCode: componentLongName(components, 'postal_code'),
     stateLong: componentLongName(components, 'administrative_area_level_1'),
     stateShort: componentShortName(components, 'administrative_area_level_1'),
+    latitude: Number.isFinite(latitude) ? latitude : null,
+    longitude: Number.isFinite(longitude) ? longitude : null,
   };
 }
 
@@ -200,7 +207,7 @@ async function fetchPlaceAddressDetailsWeb(placeId: string): Promise<PlaceAddres
     service.getDetails(
       {
         placeId,
-        fields: ['address_component', 'formatted_address'],
+        fields: ['address_component', 'formatted_address', 'geometry'],
       },
       (place, status) => {
         if (status !== places.PlacesServiceStatus.OK || !place) {
@@ -210,6 +217,7 @@ async function fetchPlaceAddressDetailsWeb(placeId: string): Promise<PlaceAddres
         resolve(detailsFromComponents(
           place.formatted_address || '',
           place.address_components ?? [],
+          place.geometry?.location,
         ));
       },
     );
@@ -264,7 +272,7 @@ async function fetchPlaceAddressDetailsNative(placeId: string): Promise<PlaceAdd
 
   const params = new URLSearchParams({
     place_id: placeId,
-    fields: 'address_component,formatted_address',
+    fields: 'address_component,formatted_address,geometry',
     key: apiKey,
   });
   const response = await fetch(
@@ -280,6 +288,7 @@ async function fetchPlaceAddressDetailsNative(placeId: string): Promise<PlaceAdd
     result?: {
       formatted_address?: string;
       address_components?: GoogleAddressComponent[];
+      geometry?: { location?: { lat?: number; lng?: number } };
     };
   };
 
@@ -287,10 +296,15 @@ async function fetchPlaceAddressDetailsNative(placeId: string): Promise<PlaceAdd
     throw new Error(result.error_message || `Address details failed (${result.status}).`);
   }
 
-  return detailsFromComponents(
-    result.result?.formatted_address || '',
-    result.result?.address_components ?? [],
-  );
+  const location = result.result?.geometry?.location;
+  return {
+    ...detailsFromComponents(
+      result.result?.formatted_address || '',
+      result.result?.address_components ?? [],
+    ),
+    latitude: typeof location?.lat === 'number' ? location.lat : null,
+    longitude: typeof location?.lng === 'number' ? location.lng : null,
+  };
 }
 
 export async function fetchAddressSuggestions(

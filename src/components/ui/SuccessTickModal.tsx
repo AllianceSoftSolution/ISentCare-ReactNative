@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Animated, Easing, Modal, StyleSheet, Text, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 
@@ -17,9 +17,9 @@ export function SuccessTickModal({
   durationMs = 2200,
   onDone,
 }: SuccessTickModalProps) {
-  const scale = useRef(new Animated.Value(0.4)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
-  const checkScale = useRef(new Animated.Value(0)).current;
+  const [scale] = useState(() => new Animated.Value(0.4));
+  const [opacity] = useState(() => new Animated.Value(0));
+  const [checkScale] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     if (!visible) return;

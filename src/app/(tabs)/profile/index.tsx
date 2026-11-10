@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { ActivityIndicator, Alert, Image, Linking, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -140,6 +140,8 @@ export default function ProfileScreen() {
   const navigateTo = (section: (typeof profileOptions)[number]['section']) => {
     if (section === 'my-shifts') {
       router.push('/(tabs)/profile/my-shifts');
+    } else if (section === 'settings') {
+      router.push('/(tabs)/profile/account-settings' as Href);
     } else if (section === 'support') {
       void openSupport();
     } else if (section === 'share') {

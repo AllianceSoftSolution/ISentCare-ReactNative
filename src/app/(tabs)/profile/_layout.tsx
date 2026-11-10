@@ -6,6 +6,7 @@ export default function ProfileStackLayout() {
       <Stack.Screen name="index" />
       <Stack.Screen name="details" />
       <Stack.Screen name="my-shifts" />
+      <Stack.Screen name="account-settings" />
     </Stack>
   );
 }
