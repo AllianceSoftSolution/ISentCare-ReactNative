@@ -1,9 +1,10 @@
 import * as Location from 'expo-location';
 import { Platform } from 'react-native';
 
-const MAX_LOCATION_AGE_MS = 30_000;
-const MAX_ACCURACY_METERS = 50;
-const LOCATION_TIMEOUT_MS = 20_000;
+/** Match the server geofence radius; reject only clearly unusable readings. */
+const MAX_ACCURACY_METERS = Platform.OS === 'web' ? 250 : 100;
+const MAX_LOCATION_AGE_MS = 45_000;
+const LOCATION_TIMEOUT_MS = 25_000;
 
 export class ShiftLocationError extends Error {
   constructor(
@@ -12,6 +13,48 @@ export class ShiftLocationError extends Error {
   ) {
     super(message);
     this.name = 'ShiftLocationError';
+  }
+}
+
+function isUsableReading(location: Location.LocationObject) {
+  const { latitude, longitude, accuracy } = location.coords;
+  if (
+    !Number.isFinite(latitude)
+    || !Number.isFinite(longitude)
+    || latitude < -90
+    || latitude > 90
+    || longitude < -180
+    || longitude > 180
+  ) {
+    return false;
+  }
+
+  const age = Date.now() - location.timestamp;
+  // Clock skew can produce a tiny negative age; treat that as fresh.
+  if (age > MAX_LOCATION_AGE_MS) return false;
+
+  // Missing accuracy is common on web / some devices — let the backend geofence decide.
+  if (accuracy == null || !Number.isFinite(accuracy)) return true;
+  return accuracy <= MAX_ACCURACY_METERS;
+}
+
+async function readCurrentPosition(): Promise<Location.LocationObject> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Location.getCurrentPositionAsync({
+        accuracy: Platform.OS === 'web' ? Location.Accuracy.High : Location.Accuracy.Highest,
+        mayShowUserSettingsDialog: true,
+      }),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new ShiftLocationError('Could not get a GPS reading in time. Move to an open area and try again.')),
+          LOCATION_TIMEOUT_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 
@@ -32,45 +75,28 @@ export async function getFreshShiftLocation(): Promise<Location.LocationObjectCo
     );
   }
 
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  let location: Location.LocationObject;
-  try {
-    location = await Promise.race([
-      Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Highest,
-        mayShowUserSettingsDialog: true,
-      }),
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(
-          () => reject(new ShiftLocationError('Could not get a GPS reading in time. Move to an open area and try again.')),
-          LOCATION_TIMEOUT_MS,
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const location = await readCurrentPosition();
+      if (isUsableReading(location)) {
+        return location.coords;
+      }
+      lastError = new ShiftLocationError(
+        'Your GPS reading is too old or inaccurate to verify this shift. Move to an open area and try again.',
+      );
+    } catch (locationError) {
+      if (locationError instanceof ShiftLocationError) {
+        lastError = locationError;
+      } else {
+        lastError = new ShiftLocationError(
+          'Unable to get your current location. Check location services and try again.',
         );
-      }),
-    ]);
-  } catch (locationError) {
-    if (locationError instanceof ShiftLocationError) throw locationError;
-    throw new ShiftLocationError('Unable to get your current location. Check location services and try again.');
-  } finally {
-    if (timeout) clearTimeout(timeout);
+      }
+    }
   }
 
-  const { latitude, longitude, accuracy } = location.coords;
-  const age = Date.now() - location.timestamp;
-  if (
-    !Number.isFinite(latitude) ||
-    !Number.isFinite(longitude) ||
-    latitude < -90 ||
-    latitude > 90 ||
-    longitude < -180 ||
-    longitude > 180 ||
-    !Number.isFinite(accuracy) ||
-    accuracy === null ||
-    accuracy > MAX_ACCURACY_METERS ||
-    age < 0 ||
-    age > MAX_LOCATION_AGE_MS
-  ) {
-    throw new ShiftLocationError('Your GPS reading is too old or inaccurate to verify this shift. Move to an open area and try again.');
-  }
-
-  return location.coords;
+  throw lastError ?? new ShiftLocationError(
+    'Unable to get your current location. Check location services and try again.',
+  );
 }

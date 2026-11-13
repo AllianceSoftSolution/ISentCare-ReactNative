@@ -33,6 +33,14 @@ for (const client of [apiClient, professionalApiClient]) {
     } else if (request.headers.authorization) {
       delete request.headers.authorization;
     }
+
+    // Apisauce defaults Content-Type to application/json. That turns multipart
+    // uploads into a non-file body and Django responds with
+    // "The submitted data was not a file. Check the encoding type on the form."
+    if (typeof FormData !== 'undefined' && request.data instanceof FormData) {
+      delete request.headers['Content-Type'];
+      delete request.headers['content-type'];
+    }
   });
 
   client.addResponseTransform((response) => {

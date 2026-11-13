@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { register, requestSignupOtp, verifySignupOtp } from '@/api/auth';
+import { RegisterError, register, requestSignupOtp, verifySignupOtp } from '@/api/auth';
 import { saveSessionTokens } from '@/api/session';
 import apiClient from '@/api/apiClient';
 import * as ImagePicker from 'expo-image-picker';
@@ -29,6 +29,14 @@ import {
   RegistrationStepper,
 } from '@/components/ui/RegistrationFields';
 import type { SelectedUpload } from '@/utils/upload';
+import {
+  formatPhoneNumber,
+  isValidUsPhone,
+  normalizePhoneInput,
+  phoneDigits,
+  US_PHONE_ERROR,
+  US_PHONE_INPUT_MAX_LENGTH,
+} from '@/utils/phone';
 import {
   fetchAddressSuggestions,
   fetchPlaceAddressDetails,
@@ -61,10 +69,11 @@ export default function RegisterScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
   const [verificationEmail, setVerificationEmail] = useState('');
-  const [emailVerificationToken, setEmailVerificationToken] = useState<string | null>(null);
+  const [accountCreated, setAccountCreated] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const [otpExpiresAt, setOtpExpiresAt] = useState<number | null>(null);
   const [otpRemainingSeconds, setOtpRemainingSeconds] = useState(0);
+  const formLocked = accountCreated;
   const [address, setAddress] = useState('');
   const [addressSelected, setAddressSelected] = useState(false);
   const [addressSuggestions, setAddressSuggestions] = useState<AddressSuggestion[]>([]);
@@ -97,7 +106,7 @@ export default function RegisterScreen() {
     let active = true;
     const query = address.trim();
 
-    if (otpSent || addressSelected || query.length < 3) {
+    if (formLocked || addressSelected || query.length < 3) {
       return;
     }
 
@@ -131,7 +140,7 @@ export default function RegisterScreen() {
       clearTimeout(timer);
       controller.abort();
     };
-  }, [address, addressSelected, otpSent]);
+  }, [address, addressSelected, formLocked]);
 
   const onSelectAddressSuggestion = async (suggestion: AddressSuggestion) => {
     setAddress(suggestion.label);
@@ -290,27 +299,23 @@ export default function RegisterScreen() {
     void loadStates();
   };
 
-  const onEmailChange = (value: string) => {
-    setEmail(value);
-    if (verificationEmail && value.trim().toLowerCase() !== verificationEmail.toLowerCase()) {
-      setVerificationEmail('');
-      setEmailVerificationToken(null);
-      setVerificationCode('');
-      setOtpSent(false);
-      setOtpExpiresAt(null);
-      setOtpRemainingSeconds(0);
-    }
+  const sendSignupOtp = async () => {
+    await requestSignupOtp(email, phone);
+    setVerificationEmail(email.trim());
+    setVerificationCode('');
+    setOtpSent(true);
+    startOtpCountdown();
   };
 
   const onResendSignupOtp = async () => {
+    if (!accountCreated) {
+      setError('Create your account first, then request a verification code.');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      await requestSignupOtp(email);
-      setVerificationEmail(email.trim());
-      setEmailVerificationToken(null);
-      setVerificationCode('');
-      startOtpCountdown();
+      await sendSignupOtp();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'Could not resend the verification code.');
     } finally {
@@ -318,16 +323,16 @@ export default function RegisterScreen() {
     }
   };
 
-  const createAccount = async (formattedDob: string, verificationToken: string, stateId: number) => {
+  const createInactiveAccount = async (formattedDob: string, stateId: number) => {
     if (!coordinates) {
       throw new Error('Location is required to complete registration. Go back to Job Type and try again.');
     }
-    const data = await register(
+    await register(
       {
         first_name: firstName.trim(),
         last_name: lastName.trim(),
         email: email.trim(),
-        phone: phone.trim(),
+        phone: phoneDigits(phone),
         password,
         dob: formattedDob,
         ssn: ssn.replace(/\D/g, ''),
@@ -340,14 +345,9 @@ export default function RegisterScreen() {
         type: 'P',
         title: title.trim(),
         per_diem: perDiem,
-        email_verification_token: verificationToken,
       },
       idImage,
     );
-    await saveSessionTokens(data);
-    Alert.alert('Account created', 'Your account was created successfully.', [
-      { text: 'Continue', onPress: () => router.replace('/') },
-    ]);
   };
 
   const onSubmit = async () => {
@@ -388,8 +388,8 @@ export default function RegisterScreen() {
       setError('Please complete all required personal information fields.');
       return;
     }
-    if (!/^\d+$/.test(phone)) {
-      setError('Phone number must contain digits only.');
+    if (!isValidUsPhone(phone)) {
+      setError(US_PHONE_ERROR);
       return;
     }
     if (!/^\d{5}$/.test(zipCode)) {
@@ -400,45 +400,65 @@ export default function RegisterScreen() {
       setError('SSN must contain 9 digits.');
       return;
     }
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+    if (/^\d+$/.test(password)) {
+      setError('Password cannot be entirely numeric.');
+      return;
+    }
     if (password !== confirmPassword) {
       setError('Passwords do not match.');
       return;
     }
-    if (otpSent && !emailVerificationToken && otpRemainingSeconds === 0) {
+    if (otpSent && otpRemainingSeconds === 0) {
       setError('Your verification code has expired. Request a new code to continue.');
       return;
     }
+
     setLoading(true);
     setError(null);
     try {
-      if (!emailVerificationToken) {
-        if (!otpSent || verificationEmail.toLowerCase() !== email.trim().toLowerCase()) {
-          await requestSignupOtp(email);
-          setVerificationEmail(email.trim());
-          setVerificationCode('');
-          startOtpCountdown();
-          return;
+      // 1) Create the inactive account first (website/backend contract).
+      if (!accountCreated) {
+        try {
+          await createInactiveAccount(formattedDob, selectedState.id);
+          setAccountCreated(true);
+        } catch (createError) {
+          // Incomplete prior signup: resume at OTP when the email already exists inactive.
+          if (createError instanceof RegisterError && createError.fields.email) {
+            try {
+              await sendSignupOtp();
+              setAccountCreated(true);
+              return;
+            } catch (resumeError) {
+              throw resumeError instanceof Error ? resumeError : createError;
+            }
+          }
+          throw createError;
         }
-        if (!/^\d{5}$/.test(verificationCode.trim())) {
-          setError('Enter the 5-digit verification code sent to your email.');
-          return;
-        }
-        const token = await verifySignupOtp(email, verificationCode);
-        setEmailVerificationToken(token);
-        await createAccount(formattedDob, token, selectedState.id);
+      }
+
+      // 2) Send OTP after the account exists.
+      if (!otpSent) {
+        await sendSignupOtp();
         return;
       }
 
-      await createAccount(formattedDob, emailVerificationToken, selectedState.id);
+      // 3) Verify OTP → activate + JWT session → continue onboarding.
+      if (!/^\d{5}$/.test(verificationCode.trim())) {
+        setError('Enter the 5-digit verification code sent to your email.');
+        return;
+      }
+      const tokens = await verifySignupOtp(verificationEmail || email, verificationCode);
+      await saveSessionTokens(tokens);
+      Alert.alert('Email verified', 'Your account is ready. Continue with onboarding.', [
+        { text: 'Continue', onPress: () => router.replace('/') },
+      ]);
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : 'Registration failed.';
-      if (message.toLowerCase().includes('verify your email')) {
-        setEmailVerificationToken(null);
-        setOtpSent(false);
-        setVerificationCode('');
-        setOtpExpiresAt(null);
-        setOtpRemainingSeconds(0);
-      } else if (message.toLowerCase().includes('expired')) {
+      if (message.toLowerCase().includes('expired')) {
         setOtpExpiresAt(Date.now());
         setOtpRemainingSeconds(0);
       }
@@ -496,7 +516,7 @@ export default function RegisterScreen() {
           </View>
         ) : (
           <View style={styles.form}>
-            <Pressable style={styles.imageUpload} onPress={() => void pickIdImage()} disabled={otpSent}>
+            <Pressable style={styles.imageUpload} onPress={() => void pickIdImage()} disabled={formLocked}>
               {idImage ? (
                 <Image source={{ uri: idImage.uri }} style={styles.idImage} />
               ) : (
@@ -507,19 +527,30 @@ export default function RegisterScreen() {
               )}
             </Pressable>
             {idImage ? (
-              <Pressable onPress={() => setIdImage(null)} style={styles.removeImage} disabled={otpSent}>
+              <Pressable onPress={() => setIdImage(null)} style={styles.removeImage} disabled={formLocked}>
                 <MaterialIcons name="close" size={16} color="#b42318" />
                 <Text style={styles.removeImageText}>Remove image</Text>
               </Pressable>
             ) : null}
-            <IconTextInput {...fieldColors} icon="person" placeholder="First Name *" value={firstName} onChangeText={setFirstName} autoCapitalize="words" editable={!otpSent} />
-            <IconTextInput {...fieldColors} icon="person-outline" placeholder="Last Name *" value={lastName} onChangeText={setLastName} autoCapitalize="words" editable={!otpSent} />
-            <IconDateField {...fieldColors} placeholder="Date of Birth *" value={dob} onChange={setDob} editable={!otpSent} maximumDate={new Date()} />
-            <IconTextInput {...fieldColors} icon="fingerprint" placeholder="SSN *" value={ssn} onChangeText={(value) => setSsn(value.replace(/\D/g, '').slice(0, 9))} keyboardType="number-pad" maxLength={9} editable={!otpSent} />
-            <IconTextInput {...fieldColors} icon="email" placeholder="Email *" value={email} onChangeText={onEmailChange} keyboardType="email-address" autoCapitalize="none" autoComplete="email" editable={!otpSent} />
-            <IconTextInput {...fieldColors} icon="phone" placeholder="Phone Number *" value={phone} onChangeText={(value) => setPhone(value.replace(/\D/g, ''))} keyboardType="phone-pad" autoComplete="tel" editable={!otpSent} />
-            <IconTextInput {...fieldColors} icon="lock" placeholder="Password *" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" editable={!otpSent} />
-            <IconTextInput {...fieldColors} icon="lock-outline" placeholder="Confirm Password *" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry autoCapitalize="none" editable={!otpSent} />
+            <IconTextInput {...fieldColors} icon="person" placeholder="First Name *" value={firstName} onChangeText={setFirstName} autoCapitalize="words" editable={!formLocked} />
+            <IconTextInput {...fieldColors} icon="person-outline" placeholder="Last Name *" value={lastName} onChangeText={setLastName} autoCapitalize="words" editable={!formLocked} />
+            <IconDateField {...fieldColors} placeholder="Date of Birth *" value={dob} onChange={setDob} editable={!formLocked} maximumDate={new Date()} />
+            <IconTextInput {...fieldColors} icon="fingerprint" placeholder="SSN *" value={ssn} onChangeText={(value) => setSsn(value.replace(/\D/g, '').slice(0, 9))} keyboardType="number-pad" maxLength={9} editable={!formLocked} />
+            <IconTextInput {...fieldColors} icon="email" placeholder="Email *" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoComplete="email" editable={!formLocked} />
+            <IconTextInput
+              {...fieldColors}
+              icon="phone"
+              placeholder="Phone Number *"
+              value={formatPhoneNumber(phone)}
+              onChangeText={(value) => setPhone(normalizePhoneInput(value))}
+              keyboardType="phone-pad"
+              autoComplete="tel"
+              textContentType="telephoneNumber"
+              maxLength={US_PHONE_INPUT_MAX_LENGTH}
+              editable={!formLocked}
+            />
+            <IconTextInput {...fieldColors} icon="lock" placeholder="Password *" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" editable={!formLocked} />
+            <IconTextInput {...fieldColors} icon="lock-outline" placeholder="Confirm Password *" value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry autoCapitalize="none" editable={!formLocked} />
             <IconTextInput
               {...fieldColors}
               icon="home"
@@ -537,7 +568,7 @@ export default function RegisterScreen() {
                 );
               }}
               autoCapitalize="words"
-              editable={!otpSent}
+              editable={!formLocked}
             />
             {addressSearchLoading ? (
               <View style={styles.addressSearchStatus}>
@@ -560,15 +591,15 @@ export default function RegisterScreen() {
               </View>
             ) : null}
             {addressSearchError ? <Text style={styles.addressSearchError}>{addressSearchError}</Text> : null}
-            <IconTextInput {...fieldColors} icon="location-city" placeholder="City *" value={city} onChangeText={setCity} autoCapitalize="words" editable={!otpSent} />
-            <Pressable style={[styles.selectField, { backgroundColor: colors.backgroundElement }]} onPress={onOpenStatePicker} disabled={otpSent}>
+            <IconTextInput {...fieldColors} icon="location-city" placeholder="City *" value={city} onChangeText={setCity} autoCapitalize="words" editable={!formLocked} />
+            <Pressable style={[styles.selectField, { backgroundColor: colors.backgroundElement }]} onPress={onOpenStatePicker} disabled={formLocked}>
               <MaterialIcons name="map" size={20} color="#6b7280" />
               <Text style={[styles.selectText, { color: selectedState ? colors.text : '#7b8490' }]}>
                 {selectedState?.name || 'Select State *'}
               </Text>
               <MaterialIcons name="arrow-drop-down" size={22} color="#6b7280" />
             </Pressable>
-            <IconTextInput {...fieldColors} icon="markunread-mailbox" placeholder="Zip / Postal Code *" value={zipCode} onChangeText={(value) => setZipCode(value.replace(/\D/g, '').slice(0, 5))} keyboardType="number-pad" maxLength={5} editable={!otpSent} />
+            <IconTextInput {...fieldColors} icon="markunread-mailbox" placeholder="Zip / Postal Code *" value={zipCode} onChangeText={(value) => setZipCode(value.replace(/\D/g, '').slice(0, 5))} keyboardType="number-pad" maxLength={5} editable={!formLocked} />
             {otpSent ? (
               <View style={styles.verificationPanel}>
                 <Text style={styles.verificationTitle}>Verify your email</Text>
@@ -600,7 +631,17 @@ export default function RegisterScreen() {
               </View>
             ) : null}
             <View style={styles.row}>
-              <Pressable style={[styles.button, styles.halfButton, styles.backButton, otpSent && styles.disabled]} onPress={() => { setError(null); setStep(0); }} disabled={otpSent || loading}>
+              <Pressable
+                style={[styles.button, styles.halfButton, styles.backButton, formLocked && styles.disabled]}
+                onPress={() => {
+                  if (formLocked) {
+                    setError('Your account is already created. Enter the verification code to continue.');
+                    return;
+                  }
+                  setError(null);
+                  setStep(0);
+                }}
+                disabled={loading}>
                 <Text style={styles.backButtonText}>Previous</Text>
               </Pressable>
               <Pressable style={[styles.button, styles.halfButton, loading && styles.disabled]} onPress={() => void onSubmit()} disabled={loading}>
@@ -608,7 +649,7 @@ export default function RegisterScreen() {
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <Text style={styles.buttonText}>
-                    {emailVerificationToken ? 'Next' : otpSent ? 'Verify & Continue' : 'Continue'}
+                    {otpSent ? 'Verify & Continue' : 'Continue'}
                   </Text>
                 )}
               </Pressable>

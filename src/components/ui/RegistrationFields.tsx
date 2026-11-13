@@ -21,6 +21,7 @@ type IconTextInputProps = FieldColors & {
   secureTextEntry?: boolean;
   autoCapitalize?: ComponentProps<typeof TextInput>['autoCapitalize'];
   autoComplete?: ComponentProps<typeof TextInput>['autoComplete'];
+  textContentType?: ComponentProps<typeof TextInput>['textContentType'];
   editable?: boolean;
   multiline?: boolean;
   maxLength?: number;
@@ -34,6 +35,8 @@ export function IconTextInput({
   backgroundColor,
   textColor,
   secureTextEntry = false,
+  maxLength,
+  multiline,
   ...inputProps
 }: IconTextInputProps) {
   const [passwordVisible, setPasswordVisible] = useState(false);
@@ -42,12 +45,14 @@ export function IconTextInput({
     <View style={[styles.field, { backgroundColor }]}>
       <MaterialIcons name={icon} size={20} color="#6b7280" />
       <TextInput
-        style={[styles.textInput, { color: textColor }, inputProps.multiline && styles.multiline]}
+        style={[styles.textInput, { color: textColor }, multiline && styles.multiline]}
         placeholder={placeholder}
         placeholderTextColor="#7b8490"
         value={value}
         onChangeText={onChangeText}
         secureTextEntry={secureTextEntry && !passwordVisible}
+        maxLength={maxLength}
+        multiline={multiline}
         {...inputProps}
       />
       {secureTextEntry ? (

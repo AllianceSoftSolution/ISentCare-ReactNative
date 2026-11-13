@@ -16,7 +16,11 @@
         "foregroundImage": "./assets/images/android-icon-foreground.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.aemannisar.isentcare_android"
+      "package": "com.aemannisar.isentcare_android",
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
     },
     "web": {
       "output": "server",
@@ -66,8 +70,9 @@
         }
       },
       "eas": {
-        "projectId": "c59e6d25-235c-4ac4-9817-6f1f748f509d"
+        "projectId": "d9fa4957-d765-4c6c-9695-f2923bea9cce"
       }
-    }
+    },
+    "owner": "aeman_isentcare"
   }
 }

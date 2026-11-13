@@ -62,6 +62,13 @@ export async function clearSession() {
   ]);
   useAuthStore.getState().logout();
   setAuthToken(null);
+  // Drop in-memory profile caches so the next account cannot see prior data.
+  void import('@/store/profileRecordsCache').then(({ invalidateProfileRecordsCache }) => {
+    invalidateProfileRecordsCache();
+  });
+  void import('@/store/accountSettingsCache').then(({ invalidateAccountSettingsCache }) => {
+    invalidateAccountSettingsCache();
+  });
 }
 
 export async function restoreSession(force = false): Promise<SessionStatus> {

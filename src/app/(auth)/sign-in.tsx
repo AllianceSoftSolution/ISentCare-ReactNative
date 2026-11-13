@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { LoginError, login } from '@/api/auth';
-import { restoreSession, saveSessionTokens } from '@/api/session';
+import { clearSession, restoreSession, saveSessionTokens } from '@/api/session';
 import { useState } from 'react';
 import {
   ActivityIndicator,
@@ -54,9 +54,17 @@ export default function LoginScreen() {
       const session = await restoreSession(true);
       if (session === 'verified') {
         router.replace('/(tabs)/home');
-      } else if (session === 'pending' || session === 'incomplete') {
+      } else if (session === 'incomplete') {
+        // Email verified but onboarding not finished yet.
         router.replace('/(auth)/onboarding');
+      } else if (session === 'pending') {
+        // Application submitted; wait for admin approval before allowing access.
+        await clearSession();
+        throw new Error(
+          'Your account is awaiting administrator approval. You can sign in after an administrator verifies your account.',
+        );
       } else {
+        await clearSession();
         throw new Error('Your session could not be verified. Please sign in again.');
       }
     } catch (loginError) {
@@ -64,8 +72,13 @@ export default function LoginScreen() {
       const lowerMessage = message.toLowerCase();
       if (loginError instanceof LoginError && loginError.blocked) {
         setError(message);
-      } else if (lowerMessage.includes('verification and approval') || lowerMessage.includes('not verified')) {
-        setError('Your account is awaiting administrator verification. Please contact an administrator.');
+      } else if (
+        lowerMessage.includes('verification and approval')
+        || lowerMessage.includes('not verified')
+        || lowerMessage.includes('administrator approval')
+        || lowerMessage.includes('administrator verification')
+      ) {
+        setError('Your account is awaiting administrator approval. You can sign in after an administrator verifies your account.');
       } else if (lowerMessage.includes('no user matching') || lowerMessage.includes('invalid password')) {
         setError('Email or password is incorrect. Check your details and try again.');
       } else if (lowerMessage.includes('network') || lowerMessage.includes('connection')) {

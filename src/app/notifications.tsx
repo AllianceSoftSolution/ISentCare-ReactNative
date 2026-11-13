@@ -6,11 +6,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   fetchLicenseExpiryNotifications,
   fetchServerNotifications,
+  markAllNotificationsRead,
   type AppNotification,
 } from '@/api/notifications';
 import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
 import { ScreenHeader, ScreenHeaderRefresh } from '@/components/ui/ScreenHeader';
 import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton';
+import useNotificationBadgeStore from '@/store/notificationBadgeStore';
 
 function timeLabel(value: string) {
   const date = new Date(value);
@@ -24,22 +26,33 @@ export default function NotificationsScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const setBadgeCount = useNotificationBadgeStore((state) => state.setCount);
+  const refreshBadge = useNotificationBadgeStore((state) => state.refresh);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const [expiry, server] = await Promise.all([
-        fetchLicenseExpiryNotifications(),
+        fetchLicenseExpiryNotifications({ includeDismissed: true }),
         fetchServerNotifications(1).catch(() => ({ results: [] as AppNotification[], hasMore: false })),
       ]);
-      setItems([...expiry, ...server.results]);
+      const combined = [...expiry, ...server.results];
+      setItems(combined);
+
+      // Always mark inbox as read when opened so the bell badge clears even if
+      // client/server unread state was out of sync.
+      await markAllNotificationsRead(expiry.map((item) => item.id));
+      setItems((current) => current.map((item) => ({ ...item, isRead: true })));
+      setBadgeCount(0);
+      void refreshBadge();
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Unable to load notifications.');
       setItems([]);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshBadge, setBadgeCount]);
 
   useFocusEffect(
     useCallback(() => {
@@ -72,12 +85,12 @@ export default function NotificationsScreen() {
           <View style={styles.stateCard}>
             <MaterialIcons name="notifications-none" size={34} color="#98a2b3" />
             <Text style={styles.emptyTitle}>No notifications</Text>
-            <Text style={styles.mutedText}>License expiry alerts within 30 days will show up here.</Text>
+            <Text style={styles.mutedText}>Shift updates and license expiry alerts will show up here.</Text>
           </View>
         ) : (
           <View style={styles.list}>
             {items.map((item) => (
-              <View key={item.id} style={styles.card}>
+              <View key={item.id} style={[styles.card, item.isRead && styles.cardRead]}>
                 <View style={[styles.iconWrap, item.kind === 'license_expiry' && styles.iconWarn]}>
                   <MaterialIcons
                     name={item.kind === 'license_expiry' ? 'event-busy' : 'notifications'}
@@ -86,7 +99,7 @@ export default function NotificationsScreen() {
                   />
                 </View>
                 <View style={styles.cardBody}>
-                  <Text style={styles.message}>{item.message}</Text>
+                  <Text style={[styles.message, item.isRead && styles.messageRead]}>{item.message}</Text>
                   {item.kind === 'license_expiry' ? (
                     <Text style={styles.tag}>License expiry</Text>
                   ) : (
@@ -115,6 +128,7 @@ const styles = StyleSheet.create({
     borderColor: '#e7edf3',
     backgroundColor: '#fff',
   },
+  cardRead: { backgroundColor: '#f8fafc' },
   iconWrap: {
     width: 40,
     height: 40,
@@ -125,7 +139,8 @@ const styles = StyleSheet.create({
   },
   iconWarn: { backgroundColor: '#fffaeb' },
   cardBody: { flex: 1, gap: 6 },
-  message: { color: '#263341', fontSize: 14, lineHeight: 20, fontWeight: '500' },
+  message: { color: '#263341', fontSize: 14, lineHeight: 20, fontWeight: '600' },
+  messageRead: { fontWeight: '500', color: '#475467' },
   tag: { alignSelf: 'flex-start', color: '#b54708', fontSize: 12, fontWeight: '700' },
   time: { color: '#667085', fontSize: 12 },
   stateCard: {

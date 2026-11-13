@@ -67,6 +67,11 @@ export function getErrorMessage(data: unknown, fallback: string) {
       }
     } else if (value && typeof value === 'object') {
       const body = value as Record<string, unknown>;
+      // Prefer nested API error.message over the generic 500 wrapper detail.
+      if (body.error && typeof body.error === 'object') {
+        const nested = findMessage((body.error as Record<string, unknown>).message);
+        if (nested) return nested;
+      }
       for (const key of [...preferredKeys, ...Object.keys(body).filter((key) => !preferredKeys.includes(key))]) {
         const message = findMessage(body[key]);
         if (message) return message;

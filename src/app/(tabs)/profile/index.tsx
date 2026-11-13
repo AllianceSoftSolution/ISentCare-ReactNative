@@ -142,6 +142,16 @@ export default function ProfileScreen() {
       router.push('/(tabs)/profile/my-shifts');
     } else if (section === 'settings') {
       router.push('/(tabs)/profile/account-settings' as Href);
+    } else if (
+      section === 'employment-history'
+      || section === 'education'
+      || section === 'attachments'
+      || section === 'licenses'
+    ) {
+      router.push({
+        pathname: '/(tabs)/profile/account-settings',
+        params: { tab: 'employment', section },
+      } as Href);
     } else if (section === 'support') {
       void openSupport();
     } else if (section === 'share') {

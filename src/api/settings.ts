@@ -1,6 +1,6 @@
 import apiClient, { professionalApiClient } from '@/api/apiClient';
 import { formatApiFailure } from '@/api/work';
-import { appendUpload, multipartRequestConfig, type SelectedUpload } from '@/utils/upload';
+import { appendUploadAsync, multipartRequestConfig, type SelectedUpload } from '@/utils/upload';
 
 export type NotificationPreferences = {
   id: number;
@@ -123,7 +123,7 @@ export async function updatePassword(userId: number, password: string): Promise<
 
 export async function updateProfilePhoto(userId: number, photo: SelectedUpload): Promise<void> {
   const formData = new FormData();
-  appendUpload(formData, 'dp', photo);
+  await appendUploadAsync(formData, 'dp', photo);
   const response = await apiClient.patch(`/users/${userId}/`, formData, multipartRequestConfig);
   if (!response.ok) {
     throw new Error(responseError(response, 'Unable to update your profile photo.'));

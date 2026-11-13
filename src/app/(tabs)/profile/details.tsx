@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import * as WebBrowser from 'expo-web-browser';
 import {
   ActivityIndicator,
   Image,
@@ -15,11 +14,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import apiClient, { apiOrigin, professionalApiClient } from '@/api/apiClient';
 import { fetchEarningsReport, type EarningsMonth } from '@/api/notifications';
 import { formatApiFailure, formatMoney, formatShiftTiming, formatWorkDate } from '@/api/work';
+import { EditableProfileRecords } from '@/components/profile/EditableProfileRecords';
 import { EarningsChart } from '@/components/ui/EarningsChart';
 import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton';
 import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
 import { ScreenHeader, ScreenHeaderRefresh } from '@/components/ui/ScreenHeader';
 import useAuthStore from '@/store/authStore';
+import { formatPhoneNumber, phoneDigits } from '@/utils/phone';
+
+const editableSections = new Set(['employment-history', 'education', 'licenses', 'attachments']);
 
 type DataRecord = Record<string, unknown>;
 type ProfileData = {
@@ -32,11 +35,6 @@ type ProfileData = {
   address?: { address?: string; city?: string; zip_code?: string; state?: string | number } | null;
 };
 type PageState = { results: DataRecord[]; hasMore: boolean };
-type DocumentState = {
-  attachments: DataRecord[];
-  eligibility: DataRecord[];
-  resume: { resume?: string | null; has_resume?: boolean } | null;
-};
 
 const sectionTitles: Record<string, string> = {
   'my-profile': 'My Profile',
@@ -78,7 +76,7 @@ const recordFields: Record<string, [string, string][]> = {
     ['duration', 'Duration (years)'],
     ['start_date', 'From'],
     ['end_date', 'To'],
-    ['gpa', 'GPA'],
+    ['graduated', 'Graduated'],
     ['country', 'Country'],
     ['city', 'City'],
   ],
@@ -136,12 +134,20 @@ function responseError(response: { status?: number; problem?: string; data?: unk
   return formatApiFailure(response, fallback);
 }
 
-function displayValue(value: unknown): string {
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) return value.map(displayValue).filter(Boolean).join(', ');
+function displayValue(value: unknown, fieldKey?: string): string {
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'string' || typeof value === 'number') {
+    const text = String(value);
+    if (fieldKey === 'phone' || fieldKey === 'telephone') {
+      const digits = phoneDigits(text);
+      return digits ? formatPhoneNumber(digits) : text;
+    }
+    return text;
+  }
+  if (Array.isArray(value)) return value.map((item) => displayValue(item, fieldKey)).filter(Boolean).join(', ');
   if (isRecord(value)) {
     for (const key of ['name', 'title', 'label', 'address', 'value']) {
-      if (value[key] !== undefined && value[key] !== null) return displayValue(value[key]);
+      if (value[key] !== undefined && value[key] !== null) return displayValue(value[key], fieldKey);
     }
   }
   return '';
@@ -151,10 +157,6 @@ function documentUrl(value: string) {
   return /^https?:\/\//i.test(value)
     ? value
     : `${apiOrigin}${value.startsWith('/') ? '' : '/'}${value}`;
-}
-
-function fileName(value: string) {
-  return decodeURIComponent(value.split(/[?#]/, 1)[0].split('/').pop() || 'Open document');
 }
 
 function SkeletonCard() {
@@ -178,7 +180,6 @@ export default function ProfileDetailsScreen() {
   const [profile, setProfile] = useState<ProfileData | null>(null);
   const [completedShifts, setCompletedShifts] = useState<DataRecord[]>([]);
   const [records, setRecords] = useState<DataRecord[]>([]);
-  const [documents, setDocuments] = useState<DocumentState | null>(null);
   const [earningsMonths, setEarningsMonths] = useState<EarningsMonth[]>([]);
   const [earningsYearTotal, setEarningsYearTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -201,7 +202,6 @@ export default function ProfileDetailsScreen() {
       setRecords([]);
       setProfile(null);
       setCompletedShifts([]);
-      setDocuments(null);
       setEarningsMonths([]);
       setEarningsYearTotal(0);
     } else {
@@ -243,30 +243,11 @@ export default function ProfileDetailsScreen() {
             }
           }
         }
-      } else if (section === 'attachments') {
-        const [attachmentResponse, resumeResponse, eligibilityResponse] = await Promise.all([
-          professionalApiClient.get<unknown>('/attachments/'),
-          professionalApiClient.get<DocumentState['resume']>('/resume/'),
-          professionalApiClient.get<unknown>('/extra_attachments/'),
-        ]);
-        if (!isCurrentRequest()) return;
-        if (!attachmentResponse.ok) throw new Error(responseError(attachmentResponse, 'Unable to load attachments'));
-        if (!resumeResponse.ok) throw new Error(responseError(resumeResponse, 'Unable to load resume'));
-        if (!eligibilityResponse.ok) throw new Error(responseError(eligibilityResponse, 'Unable to load eligibility documents'));
-        const attachmentData = extractRows(attachmentResponse.data).results;
-        const eligibilityData = extractRows(eligibilityResponse.data).results;
-        setDocuments({
-          attachments: attachmentData,
-          eligibility: eligibilityData,
-          resume: resumeResponse.data ?? null,
-        });
-      } else if (section === 'settings') {
+      } else if (editableSections.has(section) || section === 'settings') {
+        // Editable sections load through EditableProfileRecords; settings is a menu.
         setRecords([]);
       } else {
         const endpoints: Record<string, string> = {
-          'employment-history': '/employements/',
-          education: '/educations/',
-          licenses: '/licenses/',
           references: '/references/',
         };
         const endpoint = endpoints[section];
@@ -298,34 +279,6 @@ export default function ProfileDetailsScreen() {
     };
   }, [loadSection]));
 
-  const openDocument = async (path: string) => {
-    try {
-      await WebBrowser.openBrowserAsync(documentUrl(path));
-    } catch (openError) {
-      setError(openError instanceof Error ? `Unable to open document: ${openError.message}` : 'Unable to open document.');
-    }
-  };
-
-  const renderDocument = (label: string, value: unknown, detail?: unknown) => {
-    if (typeof value !== 'string' || !value) return null;
-    const extra = displayValue(detail);
-    return (
-      <Pressable
-        key={`${label}-${value}`}
-        accessibilityRole="button"
-        style={styles.documentRow}
-        onPress={() => void openDocument(value)}>
-        <MaterialIcons name="description" size={22} color={FORM_PRIMARY} />
-        <View style={styles.recordText}>
-          <Text style={styles.recordTitle}>{label}</Text>
-          <Text style={styles.mutedText} numberOfLines={1}>{fileName(value)}</Text>
-          {extra ? <Text style={styles.mutedText}>Expires {extra}</Text> : null}
-        </View>
-        <MaterialIcons name="open-in-new" size={19} color="#667085" />
-      </Pressable>
-    );
-  };
-
   const profileImage = profile?.dp ? documentUrl(profile.dp) : null;
   const imageHeaders = (() => {
     if (!profileImage || !token) return undefined;
@@ -347,7 +300,7 @@ export default function ProfileDetailsScreen() {
       if ((section === 'timesheets' || section === 'earnings') && (key === 'facility' || key === 'pay')) {
         return [];
       }
-      const value = displayValue(record[key]);
+      const value = displayValue(record[key], key);
       return value ? [{ key, label, value }] : [];
     });
   });
@@ -379,6 +332,10 @@ export default function ProfileDetailsScreen() {
       <ScrollView contentContainerStyle={styles.container}>
         {!isValidSection ? (
           <View style={styles.stateCard}><Text style={styles.errorText}>This profile page is not available.</Text></View>
+        ) : editableSections.has(section) ? (
+          <EditableProfileRecords
+            section={section as 'employment-history' | 'education' | 'licenses' | 'attachments'}
+          />
         ) : loading ? (
           <View style={styles.skeletonList}>
             {section === 'my-profile' ? (
@@ -422,8 +379,21 @@ export default function ProfileDetailsScreen() {
               <InfoRow label="First name" value={profile.first_name} />
               <InfoRow label="Last name" value={profile.last_name} />
               <InfoRow label="Email" value={profile.email} />
-              <InfoRow label="Phone number" value={profile.phone} />
+              <InfoRow
+                label="Phone number"
+                value={profile.phone ? formatPhoneNumber(profile.phone) : profile.phone}
+              />
               <InfoRow label="Address" value={address} />
+              <Text style={styles.adminNote}>
+                Name, email, and phone can only be changed by an administrator. Update photo, address, password, employment records, and notifications in Settings.
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                style={styles.settingsLink}
+                onPress={() => router.push('/(tabs)/profile/account-settings')}>
+                <Text style={styles.linkText}>Open Settings</Text>
+                <MaterialIcons name="chevron-right" size={18} color={FORM_PRIMARY} />
+              </Pressable>
             </View>
             <View style={styles.recordCard}>
               <View style={styles.recordHeading}>
@@ -455,38 +425,49 @@ export default function ProfileDetailsScreen() {
           </View>
         ) : section === 'settings' ? (
           <View style={styles.menuCard}>
-            {settingsSections.map((item, index) => (
-              <View key={item.section}>
+            {[
+              { tab: 'profile', title: 'Profile', icon: 'person-outline' as const },
+              { tab: 'address', title: 'Address', icon: 'place' as const },
+              { tab: 'employment', title: 'Employment', icon: 'work-outline' as const },
+              { tab: 'notifications', title: 'Notifications', icon: 'notifications-none' as const },
+            ].map((item, index) => (
+              <View key={item.tab}>
                 {index > 0 ? <View style={styles.divider} /> : null}
                 <Pressable
                   accessibilityRole="button"
                   style={styles.menuItem}
-                  onPress={() => router.push({ pathname: '/(tabs)/profile/details', params: { section: item.section } })}>
+                  onPress={() => router.push({
+                    pathname: '/(tabs)/profile/account-settings',
+                    params: { tab: item.tab },
+                  })}>
                   <MaterialIcons name={item.icon} size={22} color={FORM_PRIMARY} />
                   <Text style={styles.menuLabel}>{item.title}</Text>
                   <MaterialIcons name="chevron-right" size={22} color="#98a2b3" />
                 </Pressable>
               </View>
             ))}
-          </View>
-        ) : section === 'attachments' && documents ? (
-          <View style={styles.recordList}>
-            {documents.resume?.has_resume && documents.resume.resume
-              ? renderDocument('Resume', documents.resume.resume)
-              : null}
-            {documents.attachments.map((record, index) => renderDocument(
-              displayValue(record.type) || `Credential ${index + 1}`,
-              record.file,
-              record.expiry_date,
+            {settingsSections.map((item) => (
+              <View key={item.section}>
+                <View style={styles.divider} />
+                <Pressable
+                  accessibilityRole="button"
+                  style={styles.menuItem}
+                  onPress={() => {
+                    if (item.section === 'references') {
+                      router.push({ pathname: '/(tabs)/profile/details', params: { section: 'references' } });
+                      return;
+                    }
+                    router.push({
+                      pathname: '/(tabs)/profile/account-settings',
+                      params: { tab: 'employment', section: item.section },
+                    });
+                  }}>
+                  <MaterialIcons name={item.icon} size={22} color={FORM_PRIMARY} />
+                  <Text style={styles.menuLabel}>{item.title}</Text>
+                  <MaterialIcons name="chevron-right" size={22} color="#98a2b3" />
+                </Pressable>
+              </View>
             ))}
-            {documents.eligibility.map((record, index) => renderDocument(
-              displayValue(record.category) || `Employment eligibility ${index + 1}`,
-              record.file,
-              record.expiry_date,
-            ))}
-            {!documents.resume?.has_resume && !documents.attachments.length && !documents.eligibility.length
-              ? <EmptyState text="No uploaded documents were found." />
-              : null}
           </View>
         ) : section === 'timesheets' && records.length ? (
           <>
@@ -593,13 +574,15 @@ export default function ProfileDetailsScreen() {
                         ? formatShiftTiming(item.value)
                         : item.key === 'pay'
                           ? formatMoney(item.value)
-                          : item.value}
+                          : item.key === 'phone' || item.key === 'telephone'
+                            ? displayValue(item.value, item.key)
+                            : item.value}
                   />
                 ))}
               </View>
             ))}
           </View>
-        ) : section === 'timesheets' || section === 'earnings' || section === 'employment-history' || section === 'education' || section === 'licenses' || section === 'references' ? (
+        ) : section === 'timesheets' || section === 'earnings' || section === 'references' ? (
           <EmptyState text={section === 'timesheets' ? 'No time sheets are available.' : `No ${title.toLowerCase()} records found.`} />
         ) : null}
 
@@ -689,7 +672,6 @@ const styles = StyleSheet.create({
   menuItem: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 12 },
   menuLabel: { flex: 1, color: '#344054', fontSize: 15, fontWeight: '500' },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: '#e4e7ec' },
-  documentRow: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 10, backgroundColor: '#f5f8fb' },
   recordText: { flex: 1, gap: 3 },
   completedShiftRow: {
     flexDirection: 'row',
@@ -701,6 +683,14 @@ const styles = StyleSheet.create({
     borderTopColor: '#e7edf3',
   },
   linkText: { color: FORM_PRIMARY, fontSize: 13, fontWeight: '700' },
+  adminNote: { color: '#667085', fontSize: 12, lineHeight: 17, marginTop: 4 },
+  settingsLink: {
+    marginTop: 8,
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
   loadMoreButton: { minHeight: 46, alignItems: 'center', justifyContent: 'center', borderRadius: 9, borderWidth: 1, borderColor: FORM_PRIMARY },
   loadMoreText: { color: FORM_PRIMARY, fontSize: 15, fontWeight: '700' },
 });

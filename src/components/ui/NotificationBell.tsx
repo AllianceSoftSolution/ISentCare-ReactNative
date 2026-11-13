@@ -1,36 +1,40 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect } from 'react';
+import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter, type Href } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { fetchLicenseExpiryNotifications } from '@/api/notifications';
+import useNotificationBadgeStore from '@/store/notificationBadgeStore';
 
 export function NotificationBell({ color = '#344054' }: { color?: string }) {
   const router = useRouter();
-  const [count, setCount] = useState(0);
+  const count = useNotificationBadgeStore((state) => state.count);
+  const setCount = useNotificationBadgeStore((state) => state.setCount);
+  const refresh = useNotificationBadgeStore((state) => state.refresh);
 
   useFocusEffect(
     useCallback(() => {
-      let active = true;
-      void fetchLicenseExpiryNotifications()
-        .then((items) => {
-          if (active) setCount(items.length);
-        })
-        .catch(() => {
-          if (active) setCount(0);
-        });
-      return () => {
-        active = false;
-      };
-    }, []),
+      void refresh();
+      return undefined;
+    }, [refresh]),
   );
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active') void refresh();
+    });
+    return () => sub.remove();
+  }, [refresh]);
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={count > 0 ? `Notifications, ${count} alerts` : 'Notifications'}
+      accessibilityLabel={count > 0 ? `Notifications, ${count} unread` : 'Notifications'}
       hitSlop={8}
       style={styles.button}
-      onPress={() => router.push('/notifications' as Href)}>
+      onPress={() => {
+        // Clear immediately; inbox marks everything read on open.
+        setCount(0);
+        router.push('/notifications' as Href);
+      }}>
       <MaterialIcons name="notifications-none" size={26} color={color} />
       {count > 0 ? (
         <View style={styles.badge}>

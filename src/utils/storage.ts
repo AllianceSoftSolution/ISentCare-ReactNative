@@ -13,27 +13,37 @@ export async function deleteLocalStorageItem(key: string): Promise<void> {
   await AsyncStorage.removeItem(key);
 }
 
+/**
+ * Prefer SecureStore on native. Fall back to AsyncStorage on web / Expo Go
+ * environments where SecureStore is unavailable so auth still works in browser.
+ */
+async function canUseSecureStore() {
+  try {
+    return await SecureStore.isAvailableAsync();
+  } catch {
+    return false;
+  }
+}
+
 export async function getStorageItem(key: string): Promise<string | null> {
-  if (await SecureStore.isAvailableAsync()) {
+  if (await canUseSecureStore()) {
     return SecureStore.getItemAsync(key);
   }
-  return null;
+  return AsyncStorage.getItem(key);
 }
 
 export async function setStorageItem(key: string, value: string): Promise<void> {
-  if (await SecureStore.isAvailableAsync()) {
+  if (await canUseSecureStore()) {
     await SecureStore.setItemAsync(key, value);
     return;
   }
-  throw new Error('Secure session storage is unavailable on this platform.');
+  await AsyncStorage.setItem(key, value);
 }
 
 export async function deleteStorageItem(key: string): Promise<void> {
-  if (await SecureStore.isAvailableAsync()) {
+  if (await canUseSecureStore()) {
     await SecureStore.deleteItemAsync(key);
     return;
   }
-  if (typeof localStorage !== 'undefined') {
-    localStorage.removeItem(key);
-  }
+  await AsyncStorage.removeItem(key);
 }
