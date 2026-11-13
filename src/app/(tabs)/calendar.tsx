@@ -15,7 +15,7 @@ import { fetchCalendarShifts, type CalendarShift } from '@/api/calendar';
 import { fetchHolidays, isCompanyHoliday, type Holiday } from '@/api/holidays';
 import { formatMoney, formatShiftTiming, formatWorkDate } from '@/api/work';
 import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
-import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton';
+import { getWorkListCache, setWorkListCache } from '@/store/workListCache';
 
 const weekDays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 /** Shift markers stay on brand blue; holidays use warm/violet so they never read as shifts. */
@@ -65,9 +65,31 @@ export default function CalendarScreen() {
   const year = focusedMonth.getFullYear();
   const month = focusedMonth.getMonth() + 1;
 
-  const fetchMonthData = useCallback(async () => {
+  const fetchMonthData = useCallback(async (options?: { force?: boolean; clearHolidays?: boolean }) => {
     const currentRequest = ++requestId.current;
+    const cached = getWorkListCache('calendar');
+    const cacheMatchesMonth =
+      cached && cached.data.year === year && cached.data.month === month;
+
+    if (cacheMatchesMonth) {
+      setEvents(cached.data.events);
+      if (!options?.force) setLoading(false);
+    } else {
+      setEvents([]);
+      setLoading(true);
+    }
+
+    setError(null);
+    if (holidayCache.current[year] && !options?.clearHolidays) {
+      setHolidays(holidayCache.current[year]);
+      setHolidayError(null);
+    } else if (!holidayCache.current[year]) {
+      setHolidayError(null);
+    }
+
     try {
+      if (options?.clearHolidays) delete holidayCache.current[year];
+
       const holidayPromise = holidayCache.current[year]
         ? Promise.resolve(holidayCache.current[year])
         : fetchHolidays(year).then((rows) => {
@@ -90,16 +112,17 @@ export default function CalendarScreen() {
 
       setEvents(shiftResults);
       setError(null);
+      setWorkListCache('calendar', { year, month, events: shiftResults });
 
       if (holidayResults.ok) {
         setHolidays(holidayResults.rows);
         setHolidayError(null);
-      } else {
+      } else if (!holidayCache.current[year]) {
         setHolidays([]);
         setHolidayError(holidayResults.message);
       }
     } catch (loadError) {
-      if (currentRequest === requestId.current) {
+      if (currentRequest === requestId.current && !cacheMatchesMonth) {
         setEvents([]);
         setError(loadError instanceof Error ? loadError.message : 'Unable to load your calendar.');
       }
@@ -110,9 +133,6 @@ export default function CalendarScreen() {
 
   useFocusEffect(useCallback(() => {
     const request = setTimeout(() => {
-      setLoading(true);
-      setError(null);
-      setHolidayError(null);
       void fetchMonthData();
     }, 0);
     return () => {
@@ -122,20 +142,13 @@ export default function CalendarScreen() {
   }, [fetchMonthData]));
 
   const loadEvents = () => {
-    delete holidayCache.current[year];
-    setLoading(true);
-    setError(null);
-    setHolidayError(null);
-    void fetchMonthData();
+    void fetchMonthData({ force: true, clearHolidays: true });
   };
 
   const moveMonth = (amount: number) => {
     const nextMonth = new Date(year, month - 1 + amount, 1);
     const day = Number(selectedDate.slice(-2));
     const lastDay = new Date(nextMonth.getFullYear(), nextMonth.getMonth() + 1, 0).getDate();
-    setLoading(true);
-    setError(null);
-    setHolidayError(null);
     setSelectedDate(dateKey(new Date(nextMonth.getFullYear(), nextMonth.getMonth(), Math.min(day, lastDay))));
     setFocusedMonth(nextMonth);
   };
@@ -216,8 +229,8 @@ export default function CalendarScreen() {
                 const cellDate = dateKey(new Date(year, month - 1, day));
                 const selected = cellDate === selectedDate;
                 const today = cellDate === dateKey(new Date());
-                const hasEvent = !loading && eventDates.has(cellDate);
-                const dayHolidays = loading ? [] : (holidaysByDate[cellDate] ?? []);
+                const hasEvent = eventDates.has(cellDate);
+                const dayHolidays = holidaysByDate[cellDate] ?? [];
                 const hasHoliday = dayHolidays.length > 0;
                 const hasCompanyHoliday = dayHolidays.some(isCompanyHoliday);
                 const hasUsHoliday = dayHolidays.some((holiday) => !isCompanyHoliday(holiday));
@@ -257,14 +270,6 @@ export default function CalendarScreen() {
               })}
             </View>
 
-            {loading ? (
-              <View style={styles.calendarLoading} pointerEvents="none">
-                <View style={styles.calendarLoadingBadge}>
-                  <ActivityIndicator size="small" color={FORM_PRIMARY} />
-                  <Text style={styles.calendarLoadingText}>Loading shifts & holidays…</Text>
-                </View>
-              </View>
-            ) : null}
           </View>
 
           <View style={[styles.legend, isCompact && styles.legendCompact]}>
@@ -304,24 +309,11 @@ export default function CalendarScreen() {
             disabled={loading}
             hitSlop={8}
             style={styles.refreshButton}>
-            {loading ? (
-              <ActivityIndicator size="small" color={FORM_PRIMARY} />
-            ) : (
-              <MaterialIcons name="refresh" size={22} color={FORM_PRIMARY} />
-            )}
+            <MaterialIcons name="refresh" size={22} color={FORM_PRIMARY} />
           </Pressable>
         </View>
 
-        {loading ? (
-          <View style={styles.eventList}>
-            {[0, 1].map((item) => (
-              <View key={item} style={styles.eventCard}>
-                <Skeleton style={{ width: '68%', height: 17 }} />
-                <SkeletonLines count={2} />
-              </View>
-            ))}
-          </View>
-        ) : error ? (
+        {error ? (
           <View style={styles.stateCard}>
             <MaterialIcons name="wifi-off" size={28} color="#b42318" />
             <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text>
@@ -460,25 +452,6 @@ const styles = StyleSheet.create({
   markerRow: { minHeight: 6, flexDirection: 'row', alignItems: 'center', gap: 3 },
   eventDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: 'transparent' },
   eventDotActive: { backgroundColor: SHIFT_COLOR },
-  calendarLoading: {
-    ...StyleSheet.absoluteFill,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.72)',
-    zIndex: 2,
-  },
-  calendarLoadingBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e7edf3',
-  },
-  calendarLoadingText: { color: '#344054', fontSize: 13, fontWeight: '600' },
   legend: {
     flexDirection: 'row',
     flexWrap: 'wrap',

@@ -2,7 +2,6 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useRef, useState, type ElementRef } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   PanResponder,
   Pressable,
   ScrollView,
@@ -13,9 +12,21 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { applyForWork, fetchWorkPage, formatMoney, formatShiftTiming, formatWorkDate, getShiftPayRate, type WorkItem } from '@/api/work';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
 import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton';
 import { SuccessTickModal } from '@/components/ui/SuccessTickModal';
+import {
+  getWorkListCache,
+  invalidateWorkListCache,
+  removeWorkItemFromCache,
+  setWorkListCache,
+} from '@/store/workListCache';
+import {
+  isMutationConflictError,
+  mutationConflictMessage,
+  shouldDropStaleWorkItem,
+} from '@/utils/mutationConflict';
 
 type ShiftTab = 'available' | 'completed';
 
@@ -101,6 +112,8 @@ export default function ShiftsScreen() {
   const [availableHasMore, setAvailableHasMore] = useState(false);
   const [completedHasMore, setCompletedHasMore] = useState(false);
   const [applyingId, setApplyingId] = useState<number | null>(null);
+  const [pendingShift, setPendingShift] = useState<WorkItem | null>(null);
+  const [pickError, setPickError] = useState<string | null>(null);
   const [successVisible, setSuccessVisible] = useState(false);
   const availablePage = useRef(1);
   const completedPage = useRef(1);
@@ -111,31 +124,51 @@ export default function ShiftsScreen() {
   const completedMoreBusy = useRef(false);
   const applyBusy = useRef(false);
 
-  const loadAvailable = useCallback(() => {
+  const loadAvailable = useCallback((options?: { force?: boolean; clear?: boolean }) => {
     if (availableTimer.current) clearTimeout(availableTimer.current);
     const requestId = ++availableRequest.current;
-    setAvailableLoading(true);
+    const cached = getWorkListCache('per_diem');
+    const cacheMatchesRange = cached && cached.data.range === distance;
+
+    if (cacheMatchesRange && !options?.clear) {
+      setAvailable(cached.data.results);
+      setAvailableHasMore(cached.data.hasMore);
+      availablePage.current = cached.data.page;
+      setAvailableLoading(false);
+    } else if (options?.clear || !cacheMatchesRange) {
+      setAvailable([]);
+      setAvailableHasMore(false);
+      availablePage.current = 1;
+      setAvailableLoading(true);
+    } else {
+      setAvailableLoading(true);
+    }
+
     setAvailableError(null);
-    setAvailable([]);
-    setAvailableHasMore(false);
     setAvailableMoreLoading(false);
-    availablePage.current = 1;
     availableTimer.current = setTimeout(() => {
       void fetchWorkPage<WorkItem>('/per_diem_jobs/', 1, distance)
         .then((page) => {
           if (requestId !== availableRequest.current) return;
           setAvailable(page.results);
           setAvailableHasMore(page.hasMore);
+          availablePage.current = 1;
+          setWorkListCache('per_diem', {
+            results: page.results,
+            hasMore: page.hasMore,
+            range: distance,
+            page: 1,
+          });
         })
         .catch((loadError: unknown) => {
-          if (requestId === availableRequest.current) {
+          if (requestId === availableRequest.current && !cacheMatchesRange) {
             setAvailableError(loadError instanceof Error ? loadError.message : 'Unable to load available shifts.');
           }
         })
         .finally(() => {
           if (requestId === availableRequest.current) setAvailableLoading(false);
         });
-    }, 250);
+    }, options?.force ? 0 : 250);
   }, [distance]);
 
   useFocusEffect(useCallback(() => {
@@ -146,22 +179,38 @@ export default function ShiftsScreen() {
     };
   }, [loadAvailable]));
 
-  const loadCompleted = useCallback(() => {
+  const loadCompleted = useCallback((options?: { force?: boolean }) => {
     const requestId = ++completedRequest.current;
-    setCompletedLoading(true);
+    const cached = getWorkListCache('completed');
+    if (cached && !options?.force) {
+      setCompleted(cached.data.results);
+      setCompletedHasMore(cached.data.hasMore);
+      completedPage.current = cached.data.page;
+      setCompletedLoading(false);
+    } else {
+      setCompletedLoading(true);
+      if (!cached) {
+        setCompleted([]);
+        setCompletedHasMore(false);
+        completedPage.current = 1;
+      }
+    }
     setCompletedError(null);
-    setCompleted([]);
-    setCompletedHasMore(false);
     setCompletedMoreLoading(false);
-    completedPage.current = 1;
     void fetchWorkPage<WorkItem>('/shifts/completed_shifts/', 1)
       .then((page) => {
         if (requestId !== completedRequest.current) return;
         setCompleted(page.results);
         setCompletedHasMore(page.hasMore);
+        completedPage.current = 1;
+        setWorkListCache('completed', {
+          results: page.results,
+          hasMore: page.hasMore,
+          page: 1,
+        });
       })
       .catch((loadError: unknown) => {
-        if (requestId === completedRequest.current) {
+        if (requestId === completedRequest.current && !cached) {
           setCompletedError(loadError instanceof Error ? loadError.message : 'Unable to load completed shifts.');
         }
       })
@@ -197,11 +246,28 @@ export default function ShiftsScreen() {
       );
       if (requestId !== (isAvailable ? availableRequest.current : completedRequest.current)) return;
       if (isAvailable) {
-        setAvailable((current) => [...current, ...page.results]);
+        setAvailable((current) => {
+          const merged = [...current, ...page.results];
+          setWorkListCache('per_diem', {
+            results: merged,
+            hasMore: page.hasMore,
+            range: distance,
+            page: nextPage,
+          });
+          return merged;
+        });
         availablePage.current = nextPage;
         setAvailableHasMore(page.hasMore);
       } else {
-        setCompleted((current) => [...current, ...page.results]);
+        setCompleted((current) => {
+          const merged = [...current, ...page.results];
+          setWorkListCache('completed', {
+            results: merged,
+            hasMore: page.hasMore,
+            page: nextPage,
+          });
+          return merged;
+        });
         completedPage.current = nextPage;
         setCompletedHasMore(page.hasMore);
       }
@@ -233,32 +299,43 @@ export default function ShiftsScreen() {
     });
   };
 
-  const pickShift = (shift: WorkItem) => {
+  const requestPickShift = (shift: WorkItem) => {
     if (applyBusy.current) return;
-    Alert.alert('Pick this shift?', `Apply to the shift at ${shift.facility ?? 'this facility'}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Pick',
-        onPress: () => {
-          applyBusy.current = true;
-          setApplyingId(shift.id);
-          void applyForWork('/per_diem_job_applications/', shift.id)
-            .then(() => {
-              setSuccessVisible(true);
-            })
-            .catch((error: unknown) => {
-              Alert.alert(
-                'Unable to apply',
-                error instanceof Error ? error.message : 'Your application could not be submitted. Please try again.',
-              );
-            })
-            .finally(() => {
-              applyBusy.current = false;
-              setApplyingId(null);
-            });
-        },
-      },
-    ]);
+    setPickError(null);
+    setPendingShift(shift);
+  };
+
+  const confirmPickShift = () => {
+    if (!pendingShift || applyBusy.current) return;
+    const shift = pendingShift;
+    setPendingShift(null);
+    applyBusy.current = true;
+    setApplyingId(shift.id);
+    void applyForWork('/per_diem_job_applications/', shift.id)
+      .then(() => {
+        removeWorkItemFromCache('per_diem', shift.id);
+        setAvailable((current) => current.filter((item) => item.id !== shift.id));
+        invalidateWorkListCache('shift_counts');
+        setSuccessVisible(true);
+      })
+      .catch((error: unknown) => {
+        const message = mutationConflictMessage(
+          error,
+          'Your application could not be submitted. Please try again.',
+        );
+        setPickError(message);
+        if (shouldDropStaleWorkItem(error) || isMutationConflictError(error)) {
+          if (shouldDropStaleWorkItem(error)) {
+            removeWorkItemFromCache('per_diem', shift.id);
+            setAvailable((current) => current.filter((item) => item.id !== shift.id));
+          }
+          void loadAvailable({ force: true });
+        }
+      })
+      .finally(() => {
+        applyBusy.current = false;
+        setApplyingId(null);
+      });
   };
 
   const pagerRef = useRef<ElementRef<typeof ScrollView>>(null);
@@ -289,11 +366,14 @@ export default function ShiftsScreen() {
             <Text style={styles.errorText}>{error}</Text>
             <Pressable
               accessibilityRole="button"
-              onPress={type === 'available' ? loadAvailable : loadCompleted}>
+              onPress={() => {
+                if (type === 'available') loadAvailable({ force: true });
+                else loadCompleted({ force: true });
+              }}>
               <Text style={styles.retryText}>Try again</Text>
             </Pressable>
           </View>
-        ) : loading ? (
+        ) : loading && shifts.length === 0 ? (
           <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
             <ShiftSkeletonCard />
             <ShiftSkeletonCard />
@@ -345,7 +425,7 @@ export default function ShiftsScreen() {
                       disabled={applyingId !== null}
                       onPress={(event) => {
                         event.stopPropagation();
-                        pickShift(shift);
+                        requestPickShift(shift);
                       }}>
                       {applyingId === shift.id
                         ? <ActivityIndicator color="#fff" size="small" />
@@ -441,6 +521,28 @@ export default function ShiftsScreen() {
           </ScrollView>
         </View>
       </View>
+      <ConfirmModal
+        visible={pendingShift != null}
+        title="Pick this shift?"
+        message={`Apply to the shift at ${pendingShift?.facility ?? 'this facility'}?`}
+        confirmLabel="Pick"
+        destructive={false}
+        busy={applyingId !== null}
+        onCancel={() => {
+          if (applyingId === null) setPendingShift(null);
+        }}
+        onConfirm={confirmPickShift}
+      />
+      <ConfirmModal
+        visible={pickError != null}
+        title="Unable to apply"
+        message={pickError || ''}
+        confirmLabel="OK"
+        cancelLabel="Close"
+        destructive={false}
+        onCancel={() => setPickError(null)}
+        onConfirm={() => setPickError(null)}
+      />
       <SuccessTickModal
         visible={successVisible}
         onDone={() => {

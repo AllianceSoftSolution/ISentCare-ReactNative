@@ -38,6 +38,14 @@ import {
   US_PHONE_INPUT_MAX_LENGTH,
 } from '@/utils/phone';
 import {
+  formatMaskedSsn,
+  isValidSsn,
+  SSN_ERROR,
+  SSN_INPUT_MAX_LENGTH,
+  ssnDigits,
+  ssnDigitsFromChange,
+} from '@/utils/ssn';
+import {
   fetchAddressSuggestions,
   fetchPlaceAddressDetails,
   hasPlacesApiKey,
@@ -335,7 +343,7 @@ export default function RegisterScreen() {
         phone: phoneDigits(phone),
         password,
         dob: formattedDob,
-        ssn: ssn.replace(/\D/g, ''),
+        ssn: ssnDigits(ssn),
         address: address.trim(),
         city: city.trim(),
         state: stateId,
@@ -396,8 +404,8 @@ export default function RegisterScreen() {
       setError('ZIP code must contain exactly 5 digits.');
       return;
     }
-    if (!/^\d{9}$/.test(ssn.replace(/\D/g, ''))) {
-      setError('SSN must contain 9 digits.');
+    if (!isValidSsn(ssn)) {
+      setError(SSN_ERROR);
       return;
     }
     if (password.length < 8) {
@@ -535,7 +543,16 @@ export default function RegisterScreen() {
             <IconTextInput {...fieldColors} icon="person" placeholder="First Name *" value={firstName} onChangeText={setFirstName} autoCapitalize="words" editable={!formLocked} />
             <IconTextInput {...fieldColors} icon="person-outline" placeholder="Last Name *" value={lastName} onChangeText={setLastName} autoCapitalize="words" editable={!formLocked} />
             <IconDateField {...fieldColors} placeholder="Date of Birth *" value={dob} onChange={setDob} editable={!formLocked} maximumDate={new Date()} />
-            <IconTextInput {...fieldColors} icon="fingerprint" placeholder="SSN *" value={ssn} onChangeText={(value) => setSsn(value.replace(/\D/g, '').slice(0, 9))} keyboardType="number-pad" maxLength={9} editable={!formLocked} />
+            <IconTextInput
+              {...fieldColors}
+              icon="fingerprint"
+              placeholder="SSN *"
+              value={formatMaskedSsn(ssn)}
+              onChangeText={(value) => setSsn(ssnDigitsFromChange(ssn, value))}
+              keyboardType="number-pad"
+              maxLength={SSN_INPUT_MAX_LENGTH}
+              editable={!formLocked}
+            />
             <IconTextInput {...fieldColors} icon="email" placeholder="Email *" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoComplete="email" editable={!formLocked} />
             <IconTextInput
               {...fieldColors}

@@ -2,7 +2,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Image,
   Pressable,
   ScrollView,
@@ -13,9 +12,15 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { applyForWork, formatWorkDate } from '@/api/work';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { SuccessTickModal } from '@/components/ui/SuccessTickModal';
+import { invalidateWorkListCache, removeWorkItemFromCache } from '@/store/workListCache';
+import {
+  mutationConflictMessage,
+  shouldDropStaleWorkItem,
+} from '@/utils/mutationConflict';
 
 export default function ShiftDetailsScreen() {
   const router = useRouter();
@@ -27,38 +32,45 @@ export default function ShiftDetailsScreen() {
     price: string;
   }>();
   const [loading, setLoading] = useState(false);
+  const [confirmVisible, setConfirmVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successVisible, setSuccessVisible] = useState(false);
 
-  const pickShift = () => {
+  const requestPick = () => {
     const shiftId = Number(params.id);
     if (!Number.isInteger(shiftId) || shiftId < 1 || loading) {
       setError('This shift is unavailable. Return to the shifts list and try again.');
       return;
     }
+    setError(null);
+    setConfirmVisible(true);
+  };
 
-    Alert.alert('Pick this shift?', `Apply to the shift at ${params.facility || 'this facility'}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Pick',
-        onPress: () => {
-          setLoading(true);
-          setError(null);
-          void applyForWork('/per_diem_job_applications/', shiftId)
-            .then(() => {
-              setSuccessVisible(true);
-            })
-            .catch((applyError: unknown) => {
-              setError(
-                applyError instanceof Error
-                  ? applyError.message
-                  : 'Your application could not be submitted. Please try again.',
-              );
-            })
-            .finally(() => setLoading(false));
-        },
-      },
-    ]);
+  const confirmPick = () => {
+    const shiftId = Number(params.id);
+    if (!Number.isInteger(shiftId) || shiftId < 1 || loading) return;
+    setConfirmVisible(false);
+    setLoading(true);
+    setError(null);
+    void applyForWork('/per_diem_job_applications/', shiftId)
+      .then(() => {
+        removeWorkItemFromCache('per_diem', shiftId);
+        invalidateWorkListCache('shift_counts');
+        setSuccessVisible(true);
+      })
+      .catch((applyError: unknown) => {
+        const message = mutationConflictMessage(
+          applyError,
+          'Your application could not be submitted. Please try again.',
+        );
+        setError(message);
+        if (shouldDropStaleWorkItem(applyError)) {
+          removeWorkItemFromCache('per_diem', shiftId);
+          invalidateWorkListCache('per_diem');
+          invalidateWorkListCache('shift_counts');
+        }
+      })
+      .finally(() => setLoading(false));
   };
 
   return (
@@ -69,6 +81,18 @@ export default function ShiftDetailsScreen() {
           setSuccessVisible(false);
           router.replace('/(tabs)/home');
         }}
+      />
+      <ConfirmModal
+        visible={confirmVisible}
+        title="Pick this shift?"
+        message={`Apply to the shift at ${params.facility || 'this facility'}?`}
+        confirmLabel="Pick"
+        destructive={false}
+        busy={loading}
+        onCancel={() => {
+          if (!loading) setConfirmVisible(false);
+        }}
+        onConfirm={confirmPick}
       />
       <ScreenHeader title="Shift Details" onBack={() => router.back()} backLabel="Back to shifts" />
       <ScrollView contentContainerStyle={styles.content}>
@@ -107,7 +131,7 @@ export default function ShiftDetailsScreen() {
         <Pressable
           accessibilityRole="button"
           style={[styles.pickButton, loading && styles.disabled]}
-          onPress={pickShift}
+          onPress={requestPick}
           disabled={loading}>
           {loading
             ? <ActivityIndicator color="#fff" />

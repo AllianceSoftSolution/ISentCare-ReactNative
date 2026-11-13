@@ -124,7 +124,11 @@ export async function fetchWorkPage<T>(
 export async function applyForWork(endpoint: string, jobId: number) {
   const response = await professionalApiClient.post(endpoint, { job: jobId });
   if (!response.ok) {
-    throw new Error(formatApiFailure(response, 'Unable to submit your application.'));
+    const error = new Error(
+      formatApiFailure(response, 'Unable to submit your application.'),
+    ) as Error & { status?: number };
+    if (typeof response.status === 'number') error.status = response.status;
+    throw error;
   }
 }
 

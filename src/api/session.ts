@@ -62,12 +62,21 @@ export async function clearSession() {
   ]);
   useAuthStore.getState().logout();
   setAuthToken(null);
-  // Drop in-memory profile caches so the next account cannot see prior data.
+  // Drop in-memory caches so the next account cannot see prior data.
   void import('@/store/profileRecordsCache').then(({ invalidateProfileRecordsCache }) => {
     invalidateProfileRecordsCache();
   });
   void import('@/store/accountSettingsCache').then(({ invalidateAccountSettingsCache }) => {
     invalidateAccountSettingsCache();
+  });
+  void import('@/store/workListCache').then(({ invalidateWorkListCache }) => {
+    invalidateWorkListCache();
+  });
+  void import('@/api/notificationSocket').then(({ stopNotificationSocket }) => {
+    stopNotificationSocket();
+  });
+  void import('@/store/notificationBadgeStore').then((mod) => {
+    mod.default.getState().setCount(0);
   });
 }
 

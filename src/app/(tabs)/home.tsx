@@ -16,6 +16,16 @@ import { fetchTodayShifts, punchIn, punchOut, type TodayShift } from '@/api/shif
 import { fetchWorkCount, formatMoney, formatShiftTiming, formatWorkDate } from '@/api/work';
 import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
 import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton';
+import {
+  getWorkListCache,
+  invalidateWorkListCache,
+  removeWorkItemFromCache,
+  setWorkListCache,
+} from '@/store/workListCache';
+import {
+  mutationConflictMessage,
+  shouldDropStaleWorkItem,
+} from '@/utils/mutationConflict';
 import { getFreshShiftLocation, ShiftLocationError } from '@/utils/shift-location';
 
 type ConfirmAction = {
@@ -49,15 +59,23 @@ export default function HomeScreen() {
   const actionBusy = useRef(false);
   const countsRequestId = useRef(0);
 
-  const loadShifts = useCallback(async () => {
+  const loadShifts = useCallback(async (options?: { force?: boolean }) => {
     const currentRequest = ++requestId.current;
-    setLoading(true);
+    const cached = getWorkListCache('today');
+    if (cached && !options?.force) {
+      setShifts(cached.data);
+      setLoading(false);
+    } else if (!cached) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const results = await fetchTodayShifts();
-      if (currentRequest === requestId.current) setShifts(results);
+      if (currentRequest !== requestId.current) return;
+      setShifts(results);
+      setWorkListCache('today', results);
     } catch (loadError) {
-      if (currentRequest === requestId.current) {
+      if (currentRequest === requestId.current && !cached) {
         setError(loadError instanceof Error ? loadError.message : 'Unable to load today’s shifts.');
       }
     } finally {
@@ -65,29 +83,43 @@ export default function HomeScreen() {
     }
   }, []);
 
+  const loadCounts = useCallback(async (options?: { force?: boolean }) => {
+    const currentRequest = ++countsRequestId.current;
+    const cached = getWorkListCache('shift_counts');
+    if (cached && !options?.force) {
+      setShiftCounts(cached.data);
+      setCountsLoading(false);
+    } else if (!cached) {
+      setCountsLoading(true);
+    }
+    setCountsError(null);
+    try {
+      const [available, completed] = await Promise.all([
+        fetchWorkCount('/per_diem_jobs/'),
+        fetchWorkCount('/shifts/completed_shifts/'),
+      ]);
+      if (currentRequest !== countsRequestId.current) return;
+      const next = { available, completed };
+      setShiftCounts(next);
+      setWorkListCache('shift_counts', next);
+    } catch (countError) {
+      if (currentRequest === countsRequestId.current && !cached) {
+        setCountsError(countError instanceof Error ? countError.message : 'Unable to load shift totals.');
+      }
+    } finally {
+      if (currentRequest === countsRequestId.current) setCountsLoading(false);
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       void loadShifts();
-      const currentRequest = ++countsRequestId.current;
-      setCountsLoading(true);
-      setCountsError(null);
-      void Promise.all([
-        fetchWorkCount('/per_diem_jobs/'),
-        fetchWorkCount('/shifts/completed_shifts/'),
-      ]).then(([available, completed]) => {
-        if (currentRequest === countsRequestId.current) setShiftCounts({ available, completed });
-      }).catch((countError: unknown) => {
-        if (currentRequest === countsRequestId.current) {
-          setCountsError(countError instanceof Error ? countError.message : 'Unable to load shift totals.');
-        }
-      }).finally(() => {
-        if (currentRequest === countsRequestId.current) setCountsLoading(false);
-      });
+      void loadCounts();
       return () => {
         requestId.current += 1;
         countsRequestId.current += 1;
       };
-    }, [loadShifts]),
+    }, [loadShifts, loadCounts]),
   );
 
   const finishPunchOut = async (prompt: BreakPrompt, tookBreak: boolean) => {
@@ -104,10 +136,15 @@ export default function HomeScreen() {
       try {
         const results = await fetchTodayShifts();
         setShifts(results);
+        setWorkListCache('today', results);
       } catch {
         // Punch-out succeeded; fall back to local removal if the refresh fails.
+        removeWorkItemFromCache('today', prompt.shift.id);
         setShifts((current) => current.filter((item) => item.id !== prompt.shift.id));
       }
+      invalidateWorkListCache('completed');
+      invalidateWorkListCache('shift_counts');
+      void loadCounts({ force: true });
       setNotice({
         title: 'Shift ended',
         message: tookBreak
@@ -115,9 +152,10 @@ export default function HomeScreen() {
           : 'Your shift has ended. No break time was deducted.',
       });
     } catch (actionError) {
-      const message = actionError instanceof Error
-        ? actionError.message
-        : 'Unable to end your shift. Please try again.';
+      const message = mutationConflictMessage(
+        actionError,
+        'Unable to end your shift. Please try again.',
+      );
       setNotice({
         title: actionError instanceof ShiftLocationError ? 'Location required' : 'Unable to end shift',
         message,
@@ -143,9 +181,13 @@ export default function HomeScreen() {
           latitude: location.latitude,
           longitude: location.longitude,
         });
-        setShifts((current) =>
-          current.map((item) => (item.id === shift.id ? { ...item, shift: shiftId } : item)),
-        );
+        setShifts((current) => {
+          const next = current.map((item) =>
+            item.id === shift.id ? { ...item, shift: shiftId } : item,
+          );
+          setWorkListCache('today', next);
+          return next;
+        });
         setNotice({
           title: 'Shift started',
           message: 'Your location was verified and your shift has started. You can end it anytime while at the facility.',
@@ -159,11 +201,17 @@ export default function HomeScreen() {
         });
       }
     } catch (actionError) {
-      const message = actionError instanceof Error
-        ? actionError.message
-        : mode === 'start'
+      const message = mutationConflictMessage(
+        actionError,
+        mode === 'start'
           ? 'Unable to start your shift. Please try again.'
-          : 'Unable to end your shift. Please try again.';
+          : 'Unable to end your shift. Please try again.',
+      );
+      if (mode === 'start' && shouldDropStaleWorkItem(actionError)) {
+        removeWorkItemFromCache('today', shift.id);
+        setShifts((current) => current.filter((item) => item.id !== shift.id));
+        void loadShifts({ force: true });
+      }
       setNotice({
         title: actionError instanceof ShiftLocationError
           ? 'Location required'
@@ -186,25 +234,6 @@ export default function HomeScreen() {
     setConfirming({ shift, mode });
   };
 
-  const loadCounts = async () => {
-    const currentRequest = ++countsRequestId.current;
-    setCountsLoading(true);
-    setCountsError(null);
-    try {
-      const [available, completed] = await Promise.all([
-        fetchWorkCount('/per_diem_jobs/'),
-        fetchWorkCount('/shifts/completed_shifts/'),
-      ]);
-      if (currentRequest === countsRequestId.current) setShiftCounts({ available, completed });
-    } catch (countError) {
-      if (currentRequest === countsRequestId.current) {
-        setCountsError(countError instanceof Error ? countError.message : 'Unable to load shift totals.');
-      }
-    } finally {
-      if (currentRequest === countsRequestId.current) setCountsLoading(false);
-    }
-  };
-
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.container}>
@@ -219,13 +248,13 @@ export default function HomeScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Refresh today’s shifts"
-            onPress={() => void loadShifts()}
+            onPress={() => void loadShifts({ force: true })}
             disabled={loading}>
             <MaterialIcons name="refresh" size={23} color={FORM_PRIMARY} />
           </Pressable>
         </View>
 
-        {loading ? (
+        {loading && shifts.length === 0 ? (
           <View style={styles.shiftList}>
             {[0, 1].map((item) => (
               <View key={item} style={styles.card}>
@@ -245,7 +274,7 @@ export default function HomeScreen() {
           <View style={styles.statePanel}>
             <MaterialIcons name="wifi-off" size={28} color="#b42318" />
             <Text accessibilityRole="alert" style={styles.errorText}>{error}</Text>
-            <Pressable accessibilityRole="button" onPress={() => void loadShifts()}>
+            <Pressable accessibilityRole="button" onPress={() => void loadShifts({ force: true })}>
               <Text style={styles.retryText}>Try again</Text>
             </Pressable>
           </View>
@@ -316,7 +345,7 @@ export default function HomeScreen() {
         <View style={styles.summaryHeader}>
           <Text style={styles.sectionTitle}>Your shifts</Text>
           {countsError ? (
-            <Pressable accessibilityRole="button" onPress={() => void loadCounts()} disabled={countsLoading}>
+            <Pressable accessibilityRole="button" onPress={() => void loadCounts({ force: true })} disabled={countsLoading}>
               <Text style={styles.retryText}>{countsLoading ? 'Loading…' : 'Retry totals'}</Text>
             </Pressable>
           ) : null}

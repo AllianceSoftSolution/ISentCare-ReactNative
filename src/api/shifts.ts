@@ -40,7 +40,11 @@ export async function punchIn(applicationId: number, location: PunchInLocation):
     },
   );
   if (!response.ok) {
-    throw new Error(formatApiFailure(response, 'Unable to start your shift.'));
+    const error = new Error(
+      formatApiFailure(response, 'Unable to start your shift.'),
+    ) as Error & { status?: number };
+    if (typeof response.status === 'number') error.status = response.status;
+    throw error;
   }
   const shiftId = response.data?.id;
   if (!Number.isInteger(shiftId) || !shiftId || shiftId < 1) {
@@ -63,6 +67,10 @@ export async function punchOut(
     },
   );
   if (!response.ok) {
-    throw new Error(formatApiFailure(response, 'Unable to end your shift.'));
+    const error = new Error(
+      formatApiFailure(response, 'Unable to end your shift.'),
+    ) as Error & { status?: number };
+    if (typeof response.status === 'number') error.status = response.status;
+    throw error;
   }
 }

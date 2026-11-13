@@ -2,7 +2,6 @@ import { useCallback, useRef, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,8 +11,21 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { applyForWork, fetchWorkPage, itemName, type WorkItem } from '@/api/work';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
 import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton';
+import { SuccessTickModal } from '@/components/ui/SuccessTickModal';
+import {
+  getWorkListCache,
+  invalidateWorkListCache,
+  removeWorkItemFromCache,
+  setWorkListCache,
+} from '@/store/workListCache';
+import {
+  isMutationConflictError,
+  mutationConflictMessage,
+  shouldDropStaleWorkItem,
+} from '@/utils/mutationConflict';
 
 function JobSkeletonCard() {
   return (
@@ -46,27 +58,46 @@ export default function JobsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [applyingId, setApplyingId] = useState<number | null>(null);
+  const [pendingJob, setPendingJob] = useState<WorkItem | null>(null);
+  const [successVisible, setSuccessVisible] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
   const page = useRef(1);
   const request = useRef(0);
   const moreBusy = useRef(false);
   const applyBusy = useRef(false);
 
-  const loadJobs = useCallback(() => {
+  const loadJobs = useCallback((options?: { force?: boolean }) => {
     const requestId = ++request.current;
-    setLoading(true);
+    const cached = getWorkListCache('permanent');
+    if (cached && !options?.force) {
+      setJobs(cached.data.results);
+      setHasMore(cached.data.hasMore);
+      page.current = cached.data.page;
+      setLoading(false);
+    } else {
+      setLoading(true);
+      if (!cached) {
+        setJobs([]);
+        setHasMore(false);
+        page.current = 1;
+      }
+    }
     setLoadingMore(false);
     setError(null);
-    setJobs([]);
-    setHasMore(false);
-    page.current = 1;
     void fetchWorkPage<WorkItem>('/permanent_jobs/', 1)
       .then((result) => {
         if (requestId !== request.current) return;
         setJobs(result.results);
         setHasMore(result.hasMore);
+        page.current = 1;
+        setWorkListCache('permanent', {
+          results: result.results,
+          hasMore: result.hasMore,
+          page: 1,
+        });
       })
       .catch((loadError: unknown) => {
-        if (requestId === request.current) {
+        if (requestId === request.current && !cached) {
           setError(loadError instanceof Error ? loadError.message : 'Unable to load jobs.');
         }
       })
@@ -92,7 +123,15 @@ export default function JobsScreen() {
     try {
       const result = await fetchWorkPage<WorkItem>('/permanent_jobs/', nextPage);
       if (requestId !== request.current) return;
-      setJobs((current) => [...current, ...result.results]);
+      setJobs((current) => {
+        const merged = [...current, ...result.results];
+        setWorkListCache('permanent', {
+          results: merged,
+          hasMore: result.hasMore,
+          page: nextPage,
+        });
+        return merged;
+      });
       page.current = nextPage;
       setHasMore(result.hasMore);
     } catch (loadError) {
@@ -105,36 +144,43 @@ export default function JobsScreen() {
     }
   };
 
-  const apply = (job: WorkItem) => {
+  const requestApply = (job: WorkItem) => {
     if (applyBusy.current) return;
-    Alert.alert('Apply for this job?', `Submit an application for ${itemName(job.profession) || 'this position'}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Apply',
-        onPress: () => {
-          applyBusy.current = true;
-          setApplyingId(job.id);
-          void applyForWork('/permanent_job_applications/', job.id)
-            .then(() => {
-              Alert.alert('Apply Successfully', 'Your job application was submitted.', [
-                { text: 'Continue', onPress: () => router.replace('/(tabs)/home') },
-              ]);
-            })
-            .catch((applyError: unknown) => {
-              Alert.alert(
-                'Unable to apply',
-                applyError instanceof Error
-                  ? applyError.message
-                  : 'Your application could not be submitted. Please try again.',
-              );
-            })
-            .finally(() => {
-              applyBusy.current = false;
-              setApplyingId(null);
-            });
-        },
-      },
-    ]);
+    setApplyError(null);
+    setPendingJob(job);
+  };
+
+  const confirmApply = () => {
+    if (!pendingJob || applyBusy.current) return;
+    const job = pendingJob;
+    setPendingJob(null);
+    applyBusy.current = true;
+    setApplyingId(job.id);
+    void applyForWork('/permanent_job_applications/', job.id)
+      .then(() => {
+        removeWorkItemFromCache('permanent', job.id);
+        setJobs((current) => current.filter((item) => item.id !== job.id));
+        invalidateWorkListCache('shift_counts');
+        setSuccessVisible(true);
+      })
+      .catch((error: unknown) => {
+        const message = mutationConflictMessage(
+          error,
+          'Your application could not be submitted. Please try again.',
+        );
+        setApplyError(message);
+        if (shouldDropStaleWorkItem(error) || isMutationConflictError(error)) {
+          if (shouldDropStaleWorkItem(error)) {
+            removeWorkItemFromCache('permanent', job.id);
+            setJobs((current) => current.filter((item) => item.id !== job.id));
+          }
+          void loadJobs({ force: true });
+        }
+      })
+      .finally(() => {
+        applyBusy.current = false;
+        setApplyingId(null);
+      });
   };
 
   return (
@@ -145,11 +191,11 @@ export default function JobsScreen() {
           <View style={styles.statusPanel}>
             <MaterialIcons name="wifi-off" size={26} color="#b42318" />
             <Text style={styles.errorText}>{error}</Text>
-            <Pressable accessibilityRole="button" onPress={loadJobs}>
+            <Pressable accessibilityRole="button" onPress={() => loadJobs({ force: true })}>
               <Text style={styles.retryText}>Try again</Text>
             </Pressable>
           </View>
-        ) : loading ? (
+        ) : loading && jobs.length === 0 ? (
           <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
             <JobSkeletonCard />
             <JobSkeletonCard />
@@ -192,7 +238,7 @@ export default function JobsScreen() {
                 <Pressable
                   accessibilityRole="button"
                   style={[styles.applyButton, applyingId === job.id && styles.disabled]}
-                  onPress={() => apply(job)}
+                  onPress={() => requestApply(job)}
                   disabled={applyingId !== null}>
                   {applyingId === job.id
                     ? <ActivityIndicator color="#fff" size="small" />
@@ -214,6 +260,40 @@ export default function JobsScreen() {
           </ScrollView>
         )}
       </View>
+
+      <ConfirmModal
+        visible={pendingJob != null}
+        title="Apply for this job?"
+        message={`Submit an application for ${itemName(pendingJob?.profession) || 'this position'}?`}
+        confirmLabel="Apply"
+        destructive={false}
+        busy={applyingId !== null}
+        onCancel={() => {
+          if (applyingId === null) setPendingJob(null);
+        }}
+        onConfirm={confirmApply}
+      />
+
+      <ConfirmModal
+        visible={applyError != null}
+        title="Unable to apply"
+        message={applyError || ''}
+        confirmLabel="OK"
+        cancelLabel="Close"
+        destructive={false}
+        onCancel={() => setApplyError(null)}
+        onConfirm={() => setApplyError(null)}
+      />
+
+      <SuccessTickModal
+        visible={successVisible}
+        title="Apply Successfully"
+        message="Your job application was submitted."
+        onDone={() => {
+          setSuccessVisible(false);
+          router.replace('/(tabs)/home');
+        }}
+      />
     </SafeAreaView>
   );
 }
