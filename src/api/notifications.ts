@@ -164,12 +164,17 @@ export async function fetchUnreadNotificationCount(): Promise<number> {
         '/user_notifications/unread_count/',
       );
       if (response.ok && typeof response.data?.count === 'number') {
-        return response.data.count;
+        return Math.max(0, response.data.count);
       }
-      const list = await fetchServerNotifications(1);
-      return list.results.filter((item) => !item.isRead).length;
+      try {
+        const list = await fetchServerNotifications(1);
+        return list.results.filter((item) => !item.isRead).length;
+      } catch {
+        return 0;
+      }
     })(),
-    fetchLicenseExpiryNotifications(),
+    // License alerts must not wipe the server unread badge if this call fails.
+    fetchLicenseExpiryNotifications().catch(() => [] as AppNotification[]),
   ]);
   return Math.max(0, serverCount) + licenseAlerts.length;
 }

@@ -72,9 +72,6 @@ export async function clearSession() {
   void import('@/store/workListCache').then(({ invalidateWorkListCache }) => {
     invalidateWorkListCache();
   });
-  void import('@/api/notificationSocket').then(({ stopNotificationSocket }) => {
-    stopNotificationSocket();
-  });
   void import('@/store/notificationBadgeStore').then((mod) => {
     mod.default.getState().setCount(0);
   });

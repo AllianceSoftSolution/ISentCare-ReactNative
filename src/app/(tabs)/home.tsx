@@ -1,17 +1,3 @@
-import { useCallback, useRef, useState } from 'react';
-import { useFocusEffect, useRouter } from 'expo-router';
-import {
-  ActivityIndicator,
-  Linking,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { fetchTodayShifts, punchIn, punchOut, type TodayShift } from '@/api/shifts';
 import { fetchWorkCount, formatMoney, formatShiftTiming, formatWorkDate } from '@/api/work';
 import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
@@ -27,6 +13,20 @@ import {
   shouldDropStaleWorkItem,
 } from '@/utils/mutationConflict';
 import { getFreshShiftLocation, ShiftLocationError } from '@/utils/shift-location';
+import { MaterialIcons } from '@expo/vector-icons';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Linking,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 type ConfirmAction = {
   shift: TodayShift;

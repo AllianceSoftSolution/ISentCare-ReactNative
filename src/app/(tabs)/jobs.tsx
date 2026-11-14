@@ -291,7 +291,11 @@ export default function JobsScreen() {
         message="Your job application was submitted."
         onDone={() => {
           setSuccessVisible(false);
-          router.replace('/(tabs)/home');
+          try {
+            router.replace('/(tabs)/home');
+          } catch {
+            // Stay on Jobs if navigation is unavailable; apply already succeeded.
+          }
         }}
       />
     </SafeAreaView>

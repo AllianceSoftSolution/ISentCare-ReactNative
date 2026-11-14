@@ -7,15 +7,12 @@ import { restoreSession } from '@/api/session';
 import { NotificationBell } from '@/components/ui/NotificationBell';
 import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
 import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton';
-import { useNotificationSocket } from '@/hooks/useNotificationSocket';
 
 export default function TabsLayout() {
   const router = useRouter();
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
-
-  useNotificationSocket(ready);
 
   useEffect(() => {
     let active = true;

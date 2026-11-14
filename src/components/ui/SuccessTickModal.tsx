@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Modal, StyleSheet, Text, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 
@@ -20,15 +20,22 @@ export function SuccessTickModal({
   const [scale] = useState(() => new Animated.Value(0.4));
   const [opacity] = useState(() => new Animated.Value(0));
   const [checkScale] = useState(() => new Animated.Value(0));
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+  const animationRef = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      animationRef.current?.stop();
+      animationRef.current = null;
+      return;
+    }
 
     scale.setValue(0.4);
     opacity.setValue(0);
     checkScale.setValue(0);
 
-    Animated.sequence([
+    const animation = Animated.sequence([
       Animated.parallel([
         Animated.timing(opacity, {
           toValue: 1,
@@ -55,10 +62,18 @@ export function SuccessTickModal({
         easing: Easing.out(Easing.quad),
         useNativeDriver: true,
       }),
-    ]).start(({ finished }) => {
-      if (finished) onDone();
+    ]);
+    animationRef.current = animation;
+    animation.start(({ finished }) => {
+      animationRef.current = null;
+      if (finished) onDoneRef.current();
     });
-  }, [visible, durationMs, onDone, scale, opacity, checkScale]);
+
+    return () => {
+      animation.stop();
+      animationRef.current = null;
+    };
+  }, [visible, durationMs, scale, opacity, checkScale]);
 
   return (
     <Modal visible={visible} transparent animationType="none" statusBarTranslucent>

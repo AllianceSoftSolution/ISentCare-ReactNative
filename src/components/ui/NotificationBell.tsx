@@ -7,7 +7,6 @@ import useNotificationBadgeStore from '@/store/notificationBadgeStore';
 export function NotificationBell({ color = '#344054' }: { color?: string }) {
   const router = useRouter();
   const count = useNotificationBadgeStore((state) => state.count);
-  const setCount = useNotificationBadgeStore((state) => state.setCount);
   const refresh = useNotificationBadgeStore((state) => state.refresh);
 
   useFocusEffect(
@@ -31,8 +30,7 @@ export function NotificationBell({ color = '#344054' }: { color?: string }) {
       hitSlop={8}
       style={styles.button}
       onPress={() => {
-        // Clear immediately; inbox marks everything read on open.
-        setCount(0);
+        // Keep the badge until the inbox loads; it clears there / on mark-read.
         router.push('/notifications' as Href);
       }}>
       <MaterialIcons name="notifications-none" size={26} color={color} />

@@ -12,10 +12,6 @@ import {
 import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
 import { ScreenHeader, ScreenHeaderRefresh } from '@/components/ui/ScreenHeader';
 import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton';
-import {
-  liveNotificationToAppItem,
-  subscribeLiveNotifications,
-} from '@/store/liveNotifications';
 import useNotificationBadgeStore from '@/store/notificationBadgeStore';
 
 function parseNotificationDate(value: string) {
@@ -151,21 +147,7 @@ export default function NotificationsScreen() {
   useFocusEffect(
     useCallback(() => {
       void load();
-      const unsubscribe = subscribeLiveNotifications((notification) => {
-        const next = liveNotificationToAppItem(notification);
-        setItems((current) => {
-          if (current.some((item) => item.id === next.id || (
-            next.serverId != null && item.serverId === next.serverId
-          ))) {
-            return current;
-          }
-          return [next, ...current];
-        });
-        // Inbox is open — keep the badge cleared while still showing unread styling.
-        setBadgeCount(0);
-      });
       return () => {
-        unsubscribe();
         const licenseIds = itemsRef.current
           .filter((item) => item.kind === 'license_expiry')
           .map((item) => item.id);

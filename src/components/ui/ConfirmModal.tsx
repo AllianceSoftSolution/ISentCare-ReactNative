@@ -38,7 +38,7 @@ export function ConfirmModal({
           disabled={busy}
           onPress={onCancel}
         />
-        <View style={styles.card} accessibilityRole="alertdialog">
+        <View style={styles.card} accessibilityRole="alert" accessibilityViewIsModal>
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.message}>{message}</Text>
           <View style={styles.actions}>
