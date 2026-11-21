@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "IsentCare",
-    "slug": "isentcare_app",
+    "slug": "isentcare_android",
     "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
