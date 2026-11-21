@@ -4,6 +4,8 @@ import { formatApiFailure } from '@/api/work';
 export type TodayShift = {
   id: number;
   shift: number | null;
+  /** ISO timestamp from the server when the shift was punched in. */
+  punch_in?: string | null;
   start_date: string;
   timing: string;
   position: string;
@@ -11,6 +13,24 @@ export type TodayShift = {
   state: string;
   pay_rate: number | string | null;
 };
+
+/** Matches Shift.calculate_duration(): break only applies at/after 30 minutes. */
+export const BREAK_DEDUCTION_MIN_MS = 30 * 60 * 1000;
+
+export function isBreakDeductionEligible(
+  shift: Pick<TodayShift, 'punch_in'>,
+  localPunchInAtMs?: number | null,
+  nowMs: number = Date.now(),
+): boolean {
+  const fromServer = typeof shift.punch_in === 'string' ? Date.parse(shift.punch_in) : Number.NaN;
+  const startMs = Number.isFinite(fromServer)
+    ? fromServer
+    : typeof localPunchInAtMs === 'number' && Number.isFinite(localPunchInAtMs)
+      ? localPunchInAtMs
+      : null;
+  if (startMs === null) return true;
+  return nowMs - startMs >= BREAK_DEDUCTION_MIN_MS;
+}
 
 export type PunchInLocation = {
   latitude: number;

@@ -28,15 +28,28 @@ export async function materializeUpload(upload: SelectedUpload): Promise<Selecte
 
   if (!needsBlob) return upload;
 
-  const response = await fetch(upload.uri);
-  if (!response.ok) {
-    throw new Error('Unable to read the selected file. Please choose it again.');
+  try {
+    const response = await fetch(upload.uri);
+    if (!response.ok) {
+      throw new Error('Unable to read the selected file. Please choose it again.');
+    }
+    const blob = await response.blob();
+    const file = upload.mimeType && !blob.type
+      ? new Blob([blob], { type: upload.mimeType })
+      : blob;
+    return { ...upload, file };
+  } catch (error) {
+    // After a refresh, draft-restored blob: URIs are usually revoked / invalid.
+    if (
+      error instanceof TypeError
+      || (error instanceof Error && /failed to fetch/i.test(error.message))
+    ) {
+      throw new Error(
+        `Unable to read "${upload.name || 'the selected file'}". Re-select it and submit again.`,
+      );
+    }
+    throw error;
   }
-  const blob = await response.blob();
-  const file = upload.mimeType && !blob.type
-    ? new Blob([blob], { type: upload.mimeType })
-    : blob;
-  return { ...upload, file };
 }
 
 export function appendUpload(formData: FormData, key: string, upload: SelectedUpload) {

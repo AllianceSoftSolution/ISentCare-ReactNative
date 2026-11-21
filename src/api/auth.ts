@@ -65,6 +65,17 @@ function fieldMessage(value: unknown): string | null {
 }
 
 function responseError(data: unknown, fallback: string): string {
+  if (typeof data === 'string') {
+    const trimmed = data.trim().toLowerCase();
+    if (
+      trimmed.startsWith('<!doctype html')
+      || trimmed.startsWith('<html')
+      || trimmed.includes('<head>')
+    ) {
+      return fallback;
+    }
+    if (data.trim()) return data.trim();
+  }
   if (data && typeof data === 'object') {
     const body = data as Record<string, unknown>;
     for (const key of [

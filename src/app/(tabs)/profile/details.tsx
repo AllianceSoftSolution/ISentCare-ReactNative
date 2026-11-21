@@ -395,7 +395,7 @@ export default function ProfileDetailsScreen() {
                 <MaterialIcons name="chevron-right" size={18} color={FORM_PRIMARY} />
               </Pressable>
             </View>
-            <View style={styles.recordCard}>
+            <View style={styles.completedSection}>
               <View style={styles.recordHeading}>
                 <Text style={styles.recordTitle}>Completed Shifts</Text>
                 <Pressable
@@ -405,19 +405,38 @@ export default function ProfileDetailsScreen() {
                 </Pressable>
               </View>
               {completedShifts.length ? (
-                completedShifts.map((shift, index) => (
-                  <View key={String(shift.id ?? index)} style={styles.completedShiftRow}>
-                    <View style={styles.recordText}>
-                      <Text style={styles.infoValue}>{displayValue(shift.facility) || 'Facility'}</Text>
-                      <Text style={styles.mutedText}>
-                        {[formatWorkDate(displayValue(shift.date) || displayValue(shift.start_date)), formatShiftTiming(displayValue(shift.timing))]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </Text>
+                <View style={styles.completedList}>
+                  {completedShifts.map((shift, index) => (
+                    <View key={String(shift.id ?? index)} style={styles.completedShiftCard}>
+                      <View style={styles.completedShiftTop}>
+                        <View style={styles.facilityIcon}>
+                          <MaterialIcons name="task-alt" size={20} color={FORM_PRIMARY} />
+                        </View>
+                        <View style={styles.completedShiftCopy}>
+                          <Text style={styles.completedFacility} numberOfLines={1}>
+                            {displayValue(shift.facility) || 'Facility'}
+                          </Text>
+                          <Text style={styles.mutedText} numberOfLines={1}>
+                            {displayValue(shift.position) || 'Completed shift'}
+                          </Text>
+                        </View>
+                        <Text style={styles.completedPay}>{formatMoney(displayValue(shift.pay))}</Text>
+                      </View>
+                      <View style={styles.completedMeta}>
+                        <View style={styles.metaChip}>
+                          <MaterialIcons name="event" size={15} color="#667085" />
+                          <Text style={styles.metaText}>
+                            {formatWorkDate(displayValue(shift.date) || displayValue(shift.start_date))}
+                          </Text>
+                        </View>
+                        <View style={styles.metaChip}>
+                          <MaterialIcons name="schedule" size={15} color="#667085" />
+                          <Text style={styles.metaText}>{formatShiftTiming(displayValue(shift.timing))}</Text>
+                        </View>
+                      </View>
                     </View>
-                    <Text style={styles.rate}>{formatMoney(displayValue(shift.pay))}</Text>
-                  </View>
-                ))
+                  ))}
+                </View>
               ) : (
                 <Text style={styles.mutedText}>No completed shifts yet.</Text>
               )}
@@ -673,14 +692,41 @@ const styles = StyleSheet.create({
   menuLabel: { flex: 1, color: '#344054', fontSize: 15, fontWeight: '500' },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: '#e4e7ec' },
   recordText: { flex: 1, gap: 3 },
-  completedShiftRow: {
+  completedSection: { gap: 12 },
+  completedList: { gap: 10 },
+  completedShiftCard: {
+    gap: 12,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e7edf3',
+    backgroundColor: '#fff',
+  },
+  completedShiftTop: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingVertical: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#e7edf3',
+    gap: 10,
+  },
+  completedShiftCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  completedFacility: {
+    color: '#263341',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  completedPay: {
+    color: '#263341',
+    fontSize: 15,
+    fontWeight: '700',
+    flexShrink: 0,
+  },
+  completedMeta: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   linkText: { color: FORM_PRIMARY, fontSize: 13, fontWeight: '700' },
   adminNote: { color: '#667085', fontSize: 12, lineHeight: 17, marginTop: 4 },

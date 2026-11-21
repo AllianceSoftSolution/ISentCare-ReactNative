@@ -1,4 +1,10 @@
-import { fetchTodayShifts, punchIn, punchOut, type TodayShift } from '@/api/shifts';
+import {
+  fetchTodayShifts,
+  isBreakDeductionEligible,
+  punchIn,
+  punchOut,
+  type TodayShift,
+} from '@/api/shifts';
 import { fetchWorkCount, formatMoney, formatShiftTiming, formatWorkDate } from '@/api/work';
 import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
 import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton';
@@ -58,6 +64,8 @@ export default function HomeScreen() {
   const requestId = useRef(0);
   const actionBusy = useRef(false);
   const countsRequestId = useRef(0);
+  /** Local punch-in timestamps by application id (fallback before todayShifts refresh). */
+  const localPunchInAt = useRef<Record<number, number>>({});
 
   const loadShifts = useCallback(async (options?: { force?: boolean }) => {
     const currentRequest = ++requestId.current;
@@ -122,17 +130,30 @@ export default function HomeScreen() {
     }, [loadShifts, loadCounts]),
   );
 
-  const finishPunchOut = async (prompt: BreakPrompt, tookBreak: boolean) => {
-    if (actionBusy.current || prompt.shift.shift === null) return;
-    actionBusy.current = true;
-    setBusyApplicationId(prompt.shift.id);
+  const finishPunchOut = async (
+    prompt: BreakPrompt,
+    tookBreak: boolean,
+    options?: { alreadyBusy?: boolean },
+  ) => {
+    if (prompt.shift.shift === null) return;
+    if (!options?.alreadyBusy) {
+      if (actionBusy.current) return;
+      actionBusy.current = true;
+      setBusyApplicationId(prompt.shift.id);
+    }
     setBreakPrompt(null);
+    const breakEligible = isBreakDeductionEligible(
+      prompt.shift,
+      localPunchInAt.current[prompt.shift.id],
+    );
+    const applyBreak = tookBreak && breakEligible;
     try {
       await punchOut(
         prompt.shift.shift,
         { latitude: prompt.latitude, longitude: prompt.longitude },
-        tookBreak,
+        applyBreak,
       );
+      delete localPunchInAt.current[prompt.shift.id];
       try {
         const results = await fetchTodayShifts();
         setShifts(results);
@@ -147,9 +168,11 @@ export default function HomeScreen() {
       void loadCounts({ force: true });
       setNotice({
         title: 'Shift ended',
-        message: tookBreak
+        message: applyBreak
           ? 'Your shift has ended. 30 minutes were deducted for your break.'
-          : 'Your shift has ended. No break time was deducted.',
+          : breakEligible
+            ? 'Your shift has ended. No break time was deducted.'
+            : 'Your shift has ended.',
       });
     } catch (actionError) {
       const message = mutationConflictMessage(
@@ -177,13 +200,17 @@ export default function HomeScreen() {
     try {
       const location = await getFreshShiftLocation();
       if (mode === 'start') {
+        const punchedAt = Date.now();
         const shiftId = await punchIn(shift.id, {
           latitude: location.latitude,
           longitude: location.longitude,
         });
+        localPunchInAt.current[shift.id] = punchedAt;
         setShifts((current) => {
           const next = current.map((item) =>
-            item.id === shift.id ? { ...item, shift: shiftId } : item,
+            item.id === shift.id
+              ? { ...item, shift: shiftId, punch_in: new Date(punchedAt).toISOString() }
+              : item,
           );
           setWorkListCache('today', next);
           return next;
@@ -193,12 +220,20 @@ export default function HomeScreen() {
           message: 'Your location was verified and your shift has started. You can end it anytime while at the facility.',
         });
       } else {
-        // Location verified — ask about break before submitting punch-out.
-        setBreakPrompt({
+        const prompt = {
           shift,
           latitude: location.latitude,
           longitude: location.longitude,
-        });
+        };
+        // Backend only deducts a 30-minute break when worked time is >= 30 minutes.
+        if (
+          isBreakDeductionEligible(shift, localPunchInAt.current[shift.id])
+        ) {
+          setBreakPrompt(prompt);
+        } else {
+          await finishPunchOut(prompt, false, { alreadyBusy: true });
+          return;
+        }
       }
     } catch (actionError) {
       const message = mutationConflictMessage(
@@ -355,7 +390,7 @@ export default function HomeScreen() {
           <Pressable
             accessibilityRole="button"
             style={styles.summaryCard}
-            onPress={() => router.navigate('/(tabs)/shifts')}>
+            onPress={() => router.push({ pathname: '/(tabs)/shifts', params: { tab: 'available' } })}>
             <MaterialIcons name="work-outline" size={23} color={FORM_PRIMARY} />
             <Text style={styles.summaryLabel}>Available shifts</Text>
             {countsLoading && !shiftCounts
@@ -365,7 +400,7 @@ export default function HomeScreen() {
           <Pressable
             accessibilityRole="button"
             style={styles.summaryCard}
-            onPress={() => router.navigate('/(tabs)/shifts')}>
+            onPress={() => router.push({ pathname: '/(tabs)/shifts', params: { tab: 'completed' } })}>
             <MaterialIcons name="task-alt" size={23} color={FORM_PRIMARY} />
             <Text style={styles.summaryLabel}>Completed shifts</Text>
             {countsLoading && !shiftCounts

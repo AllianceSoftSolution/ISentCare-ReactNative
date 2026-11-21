@@ -14,6 +14,7 @@ import {
   fetchCatalogOptions,
   fetchEducations,
   fetchEmployments,
+  fetchExtraAttachmentCategories,
   fetchExtraAttachments,
   fetchLicenses,
   fetchOtherAttachments,
@@ -29,12 +30,14 @@ import {
   updateEmployment,
   updateOtherAttachment,
   uploadCredential,
+  uploadExtraAttachments,
   uploadResume,
   type AttachmentRecord,
   type CatalogOption,
   type CredentialUploadKey,
   type EducationRecord,
   type EmploymentRecord,
+  type ExtraAttachmentCategoryOption,
   type ExtraAttachmentRecord,
   type LicenseRecord,
   type OtherAttachmentRecord,
@@ -157,7 +160,17 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
   const [professions, setProfessions] = useState<CatalogOption[]>([]);
   const [states, setStates] = useState<CatalogOption[]>([]);
   const [countries, setCountries] = useState<CatalogOption[]>([]);
+  const [eevCategories, setEevCategories] = useState<ExtraAttachmentCategoryOption[]>([]);
+  const [eevModalOpen, setEevModalOpen] = useState(false);
+  const [eevDocPath, setEevDocPath] = useState<'IA' | 'BC'>('IA');
+  const [eevCategory, setEevCategory] = useState<ExtraAttachmentCategoryOption | null>(null);
+  const [eevSecondCategory, setEevSecondCategory] = useState<ExtraAttachmentCategoryOption | null>(null);
+  const [eevFile, setEevFile] = useState<SelectedUpload | null>(null);
+  const [eevSecondFile, setEevSecondFile] = useState<SelectedUpload | null>(null);
+  const [eevCategoryPickerOpen, setEevCategoryPickerOpen] = useState(false);
+  const [eevSecondCategoryPickerOpen, setEevSecondCategoryPickerOpen] = useState(false);
   const professionsRef = useRef<CatalogOption[]>([]);
+  const eevCategoriesRef = useRef<ExtraAttachmentCategoryOption[]>([]);
   const statesRef = useRef<CatalogOption[]>([]);
   const countriesRef = useRef<CatalogOption[]>([]);
 
@@ -772,6 +785,82 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
     }
   };
 
+  const resetEevForm = (path: 'IA' | 'BC' = 'IA') => {
+    setEevDocPath(path);
+    setEevCategory(null);
+    setEevSecondCategory(null);
+    setEevFile(null);
+    setEevSecondFile(null);
+  };
+
+  const selectEevDocPath = (path: 'IA' | 'BC') => {
+    // Re-tapping the already selected path must not wipe a chosen document type/file.
+    if (path === eevDocPath) return;
+    resetEevForm(path);
+  };
+
+  const openEevEditor = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const categories = eevCategoriesRef.current.length
+        ? eevCategoriesRef.current
+        : await fetchExtraAttachmentCategories();
+      eevCategoriesRef.current = categories;
+      setEevCategories(categories);
+      resetEevForm(extraAttachments.length > 1 ? 'BC' : 'IA');
+      setEevModalOpen(true);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Unable to load document types.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveEevDocuments = async () => {
+    if (!eevCategory) {
+      Alert.alert(
+        'Missing document type',
+        eevDocPath === 'IA'
+          ? 'Select a document type that establishes both identity and employment eligibility.'
+          : 'Select an identity document type.',
+      );
+      return;
+    }
+    if (!eevFile) {
+      Alert.alert(
+        'Missing file',
+        eevDocPath === 'IA' ? 'Upload the selected document.' : 'Upload the identity document.',
+      );
+      return;
+    }
+    if (eevDocPath === 'BC' && !eevSecondCategory) {
+      Alert.alert('Missing document type', 'Select an employment authorization document type.');
+      return;
+    }
+    if (eevDocPath === 'BC' && !eevSecondFile) {
+      Alert.alert('Missing file', 'Upload the employment authorization document.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await uploadExtraAttachments({
+        category1Id: eevCategory.id,
+        file1: eevFile,
+        category2Id: eevDocPath === 'BC' ? eevSecondCategory?.id : null,
+        file2: eevDocPath === 'BC' ? eevSecondFile : null,
+      });
+      setMessage('Employment eligibility documents updated.');
+      setEevModalOpen(false);
+      resetEevForm();
+      await reloadAfterMutation();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Unable to update eligibility documents.');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -1065,13 +1154,13 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
             </View>
           )) : <Empty text="No other documents yet." />}
 
-          {extraAttachments.length ? (
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Employment eligibility</Text>
-              <Text style={styles.helpText}>
-                Eligibility documents can be viewed here.
-              </Text>
-              {extraAttachments.map((record) => (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Employment eligibility</Text>
+            <Text style={styles.helpText}>
+              Acceptable documents — one document for both identity and employment, or one identity document plus one employment authorization document.
+            </Text>
+            {extraAttachments.length ? (
+              extraAttachments.map((record) => (
                 <Pressable
                   key={record.id}
                   accessibilityRole="button"
@@ -1089,9 +1178,21 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
                   </View>
                   <MaterialIcons name="open-in-new" size={18} color="#667085" />
                 </Pressable>
-              ))}
-            </View>
-          ) : null}
+              ))
+            ) : (
+              <Text style={styles.muted}>No eligibility documents on file.</Text>
+            )}
+            <Pressable
+              accessibilityRole="button"
+              style={[styles.primaryButton, saving && styles.disabled]}
+              disabled={saving}
+              onPress={() => void openEevEditor()}>
+              <MaterialIcons name="upload-file" size={18} color="#fff" />
+              <Text style={styles.primaryButtonText}>
+                {extraAttachments.length ? 'Replace documents' : 'Upload documents'}
+              </Text>
+            </Pressable>
+          </View>
         </>
       ) : null}
 
@@ -1370,6 +1471,146 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
         selectedIds={licenseStates.map((item) => item.id)}
         onClose={() => setLicenseStateModal(false)}
         onSelect={toggleLicenseState}
+      />
+
+      <FormModal
+        visible={eevModalOpen}
+        title="Employment eligibility documents"
+        onClose={() => {
+          if (!saving) {
+            setEevModalOpen(false);
+            resetEevForm();
+          }
+        }}
+        onSave={() => void saveEevDocuments()}
+        saving={saving}>
+        <Text style={styles.helpText}>Acceptable documents — choose one option:</Text>
+        <Pressable
+          accessibilityRole="button"
+          style={[styles.choiceOption, eevDocPath === 'IA' && styles.choiceOptionSelected]}
+          onPress={() => selectEevDocPath('IA')}>
+          <MaterialIcons
+            name={eevDocPath === 'IA' ? 'radio-button-checked' : 'radio-button-unchecked'}
+            size={20}
+            color={FORM_PRIMARY}
+          />
+          <Text style={[styles.choiceOptionText, { flex: 1 }]}>
+            One document that establishes both identity and employment eligibility
+          </Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          style={[styles.choiceOption, eevDocPath === 'BC' && styles.choiceOptionSelected]}
+          onPress={() => selectEevDocPath('BC')}>
+          <MaterialIcons
+            name={eevDocPath === 'BC' ? 'radio-button-checked' : 'radio-button-unchecked'}
+            size={20}
+            color={FORM_PRIMARY}
+          />
+          <Text style={[styles.choiceOptionText, { flex: 1 }]}>
+            One identity document and one employment authorization document
+          </Text>
+        </Pressable>
+
+        {eevDocPath === 'IA' ? (
+          <>
+            <SelectField
+              label={eevCategory?.name || 'Document (both identity & employment) *'}
+              onPress={() => setEevCategoryPickerOpen(true)}
+            />
+            {eevCategory ? (
+              <Pressable
+                accessibilityRole="button"
+                style={styles.documentRow}
+                onPress={() => {
+                  void (async () => {
+                    const selected = await pickUpload('document');
+                    if (selected) setEevFile(selected);
+                  })();
+                }}>
+                <MaterialIcons name={eevFile ? 'insert-drive-file' : 'file-upload'} size={22} color={FORM_PRIMARY} />
+                <Text style={styles.documentLabel} numberOfLines={1}>
+                  {eevFile?.name || 'Upload document *'}
+                </Text>
+              </Pressable>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <SelectField
+              label={eevCategory?.name || 'Identity document *'}
+              onPress={() => setEevCategoryPickerOpen(true)}
+            />
+            {eevCategory ? (
+              <Pressable
+                accessibilityRole="button"
+                style={styles.documentRow}
+                onPress={() => {
+                  void (async () => {
+                    const selected = await pickUpload('document');
+                    if (selected) setEevFile(selected);
+                  })();
+                }}>
+                <MaterialIcons name={eevFile ? 'insert-drive-file' : 'file-upload'} size={22} color={FORM_PRIMARY} />
+                <Text style={styles.documentLabel} numberOfLines={1}>
+                  {eevFile?.name || 'Upload identity document *'}
+                </Text>
+              </Pressable>
+            ) : null}
+
+            <SelectField
+              label={eevSecondCategory?.name || 'Employment authorization document *'}
+              onPress={() => setEevSecondCategoryPickerOpen(true)}
+            />
+            {eevSecondCategory ? (
+              <Pressable
+                accessibilityRole="button"
+                style={styles.documentRow}
+                onPress={() => {
+                  void (async () => {
+                    const selected = await pickUpload('document');
+                    if (selected) setEevSecondFile(selected);
+                  })();
+                }}>
+                <MaterialIcons name={eevSecondFile ? 'insert-drive-file' : 'file-upload'} size={22} color={FORM_PRIMARY} />
+                <Text style={styles.documentLabel} numberOfLines={1}>
+                  {eevSecondFile?.name || 'Upload employment authorization document *'}
+                </Text>
+              </Pressable>
+            ) : null}
+          </>
+        )}
+      </FormModal>
+
+      <OptionPickerModal
+        visible={eevCategoryPickerOpen}
+        title={eevDocPath === 'IA' ? 'Select document' : 'Select identity document'}
+        options={eevCategories.filter((item) => item.category === (eevDocPath === 'IA' ? 'IA' : 'ID'))}
+        selectedIds={eevCategory ? [eevCategory.id] : []}
+        onClose={() => setEevCategoryPickerOpen(false)}
+        onSelect={(option) => {
+          setEevCategory({
+            id: Number(option.id),
+            name: option.name,
+            category: eevDocPath === 'IA' ? 'IA' : 'ID',
+          });
+          setEevCategoryPickerOpen(false);
+        }}
+      />
+      <OptionPickerModal
+        visible={eevSecondCategoryPickerOpen}
+        title="Select employment authorization document"
+        options={eevCategories.filter((item) => item.category === 'AU')}
+        selectedIds={eevSecondCategory ? [eevSecondCategory.id] : []}
+        onClose={() => setEevSecondCategoryPickerOpen(false)}
+        onSelect={(option) => {
+          setEevSecondCategory({
+            id: Number(option.id),
+            name: option.name,
+            category: 'AU',
+          });
+          setEevSecondCategoryPickerOpen(false);
+        }}
       />
     </View>
   );

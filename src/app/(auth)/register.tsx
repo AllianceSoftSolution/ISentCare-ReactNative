@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import { RegisterError, register, requestSignupOtp, verifySignupOtp } from '@/api/auth';
 import { saveSessionTokens } from '@/api/session';
 import apiClient from '@/api/apiClient';
+import { networkReachabilityMessage } from '@/api/work';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { useCallback, useEffect, useState } from 'react';
@@ -214,7 +215,7 @@ export default function RegisterScreen() {
       if (!response.ok) {
         throw new Error(
           response.problem === 'NETWORK_ERROR' || response.problem === 'TIMEOUT_ERROR' || response.problem === 'CONNECTION_ERROR'
-            ? 'No internet connection. Check your connection and try again.'
+            ? networkReachabilityMessage(response.problem)
             : 'Unable to load states. Please try again.',
         );
       }
@@ -461,9 +462,9 @@ export default function RegisterScreen() {
       }
       const tokens = await verifySignupOtp(verificationEmail || email, verificationCode);
       await saveSessionTokens(tokens);
-      Alert.alert('Email verified', 'Your account is ready. Continue with onboarding.', [
-        { text: 'Continue', onPress: () => router.replace('/') },
-      ]);
+      // Navigate immediately. Alert.alert is unreliable on web (no Continue button),
+      // which left verified users stuck on this screen.
+      router.replace('/');
     } catch (submitError) {
       const message = submitError instanceof Error ? submitError.message : 'Registration failed.';
       if (message.toLowerCase().includes('expired')) {

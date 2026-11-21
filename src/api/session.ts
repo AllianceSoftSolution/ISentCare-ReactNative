@@ -2,6 +2,7 @@ import apiClient, { setAuthToken } from '@/api/apiClient';
 import type { LoginResult } from '@/api/auth';
 import { formatApiFailure } from '@/api/work';
 import useAuthStore, { type SessionStatus } from '@/store/authStore';
+import { looksLikeHtml } from '@/utils/apiErrors';
 import { deleteStorageItem, getStorageItem, setStorageItem } from '@/utils/storage';
 
 const ACCESS_TOKEN_KEY = 'accessToken';
@@ -101,7 +102,7 @@ export async function restoreSession(force = false): Promise<SessionStatus> {
     setAuthToken(token);
     const response = await apiClient.get<{ verified?: unknown }>('/users/my_profile/');
     if (!response.ok) {
-      if (response.status === 401) {
+      if (response.status === 401 || looksLikeHtml(response.data)) {
         await clearSession();
         return 'signedOut';
       }

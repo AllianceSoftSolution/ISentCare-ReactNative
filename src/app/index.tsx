@@ -20,18 +20,21 @@ export default function StartupScreen() {
         if (status === 'verified') {
           router.replace('/(tabs)/home');
         } else if (status === 'signedOut') {
-          router.replace('/(auth)/get-started');
+          router.replace('/(auth)/sign-in');
         } else {
           router.replace('/(auth)/onboarding');
         }
       } catch (initializationError) {
-        if (active) {
-          setError(
-            initializationError instanceof Error
-              ? initializationError.message
-              : 'Unable to check your session. Please try again.',
-          );
+        if (!active) return;
+        const message =
+          initializationError instanceof Error
+            ? initializationError.message
+            : 'Unable to check your session. Please try again.';
+        if (/<\s*(!doctype|html|head|body)\b/i.test(message)) {
+          router.replace('/(auth)/sign-in');
+          return;
         }
+        setError(message);
       }
     };
 

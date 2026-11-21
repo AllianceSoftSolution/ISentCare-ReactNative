@@ -1,3 +1,42 @@
+import apiClient, { professionalApiClient } from '@/api/apiClient';
+import {
+  clearRegistrationDrafts,
+  fetchMobileOnboardingDraft,
+  saveMobileOnboardingDraft,
+} from '@/api/registrationDraft';
+import {
+  appendSectionUpload,
+  appendSectionValue,
+  submitRegistrationSections,
+  type RegistrationSectionType,
+  type RegistrationSubmitSection,
+} from '@/api/registrationSubmit';
+import { clearSession, restoreSession } from '@/api/session';
+import { formatApiFailure } from '@/api/work';
+import {
+  FORM_PRIMARY,
+  IconDateField,
+  IconTextInput,
+  normalizeApiDate,
+} from '@/components/ui/RegistrationFields';
+import { SignaturePad, type SignatureStrokes } from '@/components/ui/SignaturePad';
+import { Colors, Spacing } from '@/constants/theme';
+import useAuthStore from '@/store/authStore';
+import {
+  formatPhoneNumber,
+  isValidUsPhone,
+  normalizePhoneInput,
+  US_PHONE_ERROR,
+  US_PHONE_INPUT_MAX_LENGTH,
+} from '@/utils/phone';
+import {
+  deleteLocalStorageItem,
+  getLocalStorageItem,
+  setLocalStorageItem,
+} from '@/utils/storage';
+import type { SelectedUpload } from '@/utils/upload';
+import { MaterialIcons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -14,45 +53,6 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as DocumentPicker from 'expo-document-picker';
-import { MaterialIcons } from '@expo/vector-icons';
-import apiClient, { professionalApiClient } from '@/api/apiClient';
-import { formatApiFailure } from '@/api/work';
-import { Colors, Spacing } from '@/constants/theme';
-import { SignaturePad, type SignatureStrokes } from '@/components/ui/SignaturePad';
-import {
-  deleteLocalStorageItem,
-  getLocalStorageItem,
-  setLocalStorageItem,
-} from '@/utils/storage';
-import {
-  FORM_PRIMARY,
-  IconDateField,
-  IconTextInput,
-  normalizeApiDate,
-} from '@/components/ui/RegistrationFields';
-import type { SelectedUpload } from '@/utils/upload';
-import {
-  formatPhoneNumber,
-  isValidUsPhone,
-  normalizePhoneInput,
-  US_PHONE_ERROR,
-  US_PHONE_INPUT_MAX_LENGTH,
-} from '@/utils/phone';
-import { clearSession } from '@/api/session';
-import {
-  clearRegistrationDrafts,
-  fetchMobileOnboardingDraft,
-  saveMobileOnboardingDraft,
-} from '@/api/registrationDraft';
-import {
-  appendSectionUpload,
-  appendSectionValue,
-  submitRegistrationSections,
-  type RegistrationSectionType,
-  type RegistrationSubmitSection,
-} from '@/api/registrationSubmit';
-import useAuthStore from '@/store/authStore';
 
 type Option = { id: number; name: string };
 type AttachmentGroup = 'IA' | 'AU' | 'ID';
@@ -68,7 +68,36 @@ type LicenseDraft = {
   primaryState: Option | null;
   expiryDate: string;
 };
+type ExperienceDraft = {
+  company: string;
+  jobTitle: string;
+  supervisor: string;
+  telephone: string;
+  address: string;
+  duration: string;
+  leaving: string;
+};
+type EducationDraft = {
+  country: Option | null;
+  state: string;
+  institute: string;
+  degree: string;
+  majors: string;
+  city: string;
+  duration: string;
+  graduated: 'true' | 'false' | '';
+};
+type ReferenceDraft = {
+  employer: string;
+  jobTitle: string;
+  email: string;
+  phone: string;
+  position: string;
+  contact: string;
+};
 type OnboardingSection = 'license' | 'experience' | 'education' | 'documents' | 'resume' | 'eligibility' | 'emergency' | 'references';
+
+const MAX_REFERENCES = 2;
 
 const emptyLicense = (): LicenseDraft => ({
   selectedProfession: null,
@@ -77,6 +106,36 @@ const emptyLicense = (): LicenseDraft => ({
   licenseStates: [],
   primaryState: null,
   expiryDate: '',
+});
+
+const emptyExperience = (): ExperienceDraft => ({
+  company: '',
+  jobTitle: '',
+  supervisor: '',
+  telephone: '',
+  address: '',
+  duration: '',
+  leaving: '',
+});
+
+const emptyEducation = (): EducationDraft => ({
+  country: null,
+  state: '',
+  institute: '',
+  degree: '',
+  majors: '',
+  city: '',
+  duration: '',
+  graduated: '',
+});
+
+const emptyReference = (): ReferenceDraft => ({
+  employer: '',
+  jobTitle: '',
+  email: '',
+  phone: '',
+  position: '',
+  contact: '',
 });
 
 function licenseHasAnyValue(entry: LicenseDraft) {
@@ -97,6 +156,84 @@ function licenseIsComplete(entry: LicenseDraft) {
     && entry.primaryState
     && normalizeApiDate(entry.expiryDate),
   );
+}
+
+function experienceHasAnyValue(entry: ExperienceDraft) {
+  return Boolean(
+    entry.company.trim()
+    || entry.jobTitle.trim()
+    || entry.supervisor.trim()
+    || entry.telephone.trim()
+    || entry.address.trim()
+    || entry.duration.trim()
+    || entry.leaving.trim(),
+  );
+}
+
+function experienceIsComplete(entry: ExperienceDraft) {
+  return Boolean(
+    entry.company.trim()
+    && entry.jobTitle.trim()
+    && entry.supervisor.trim()
+    && entry.telephone.trim()
+    && entry.address.trim()
+    && entry.duration.trim()
+    && entry.leaving.trim()
+    && /^\d{1,3}(\.\d)?$/.test(entry.duration.trim())
+    && Number(entry.duration) <= 999.9
+    && isValidUsPhone(entry.telephone),
+  );
+}
+
+function educationHasAnyValue(entry: EducationDraft) {
+  return Boolean(
+    entry.country
+    || entry.state.trim()
+    || entry.institute.trim()
+    || entry.degree.trim()
+    || entry.majors.trim()
+    || entry.city.trim()
+    || entry.duration.trim()
+    || entry.graduated,
+  );
+}
+
+function educationIsComplete(entry: EducationDraft) {
+  return Boolean(
+    entry.country
+    && entry.state.trim()
+    && entry.institute.trim()
+    && entry.degree.trim()
+    && entry.majors.trim()
+    && entry.city.trim()
+    && entry.duration.trim()
+    && /^\d{1,3}(\.\d)?$/.test(entry.duration.trim())
+    && Number(entry.duration) <= 999.9
+    && (entry.graduated === 'true' || entry.graduated === 'false'),
+  );
+}
+
+function referenceHasAnyValue(entry: ReferenceDraft) {
+  return Boolean(
+    entry.employer.trim()
+    || entry.jobTitle.trim()
+    || entry.email.trim()
+    || entry.phone.trim()
+    || entry.position.trim()
+    || entry.contact.trim(),
+  );
+}
+
+function referenceIsComplete(entry: ReferenceDraft) {
+  if (!(
+    entry.employer.trim()
+    && entry.jobTitle.trim()
+    && entry.phone.trim()
+    && entry.position.trim()
+    && entry.contact.trim()
+  )) return false;
+  if (entry.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(entry.email.trim())) return false;
+  return isValidUsPhone(entry.phone);
 }
 
 const SECTION_API_TYPE: Record<OnboardingSection, RegistrationSectionType> = {
@@ -132,10 +269,13 @@ const SECTION_ICONS: Record<OnboardingSection, React.ComponentProps<typeof Mater
   references: 'fact-check',
 };
 const ATTACHMENT_GROUPS: { id: AttachmentGroup; name: string }[] = [
-  { id: 'IA', name: 'Identity / Employment' },
-  { id: 'AU', name: 'Employment Authorization' },
-  { id: 'ID', name: 'Identity Document' },
+  { id: 'IA', name: 'Both identity & employment' },
+  { id: 'ID', name: 'Identity document' },
+  { id: 'AU', name: 'Employment authorization' },
 ];
+
+/** Matches website EEV path radios: one combined doc (IA) or identity + authorization (ID + AU). */
+type EevDocPath = 'IA' | 'BC';
 
 function isOption(value: unknown): value is Option {
   return Boolean(
@@ -156,7 +296,16 @@ function restoreUpload(value: unknown): SelectedUpload | null {
     return null;
   }
   const upload = value as SelectedUpload;
-  return { uri: upload.uri, name: upload.name, mimeType: upload.mimeType, size: upload.size };
+  // Draft JSON cannot keep File/Blob objects. After a browser refresh, blob:
+  // URLs are revoked, so restoring them only causes "Failed to fetch" on submit.
+  if (
+    Platform.OS === 'web'
+    && (upload.uri.startsWith('blob:') || upload.uri.startsWith('data:'))
+    && !upload.file
+  ) {
+    return null;
+  }
+  return { uri: upload.uri, name: upload.name, mimeType: upload.mimeType, size: upload.size, file: upload.file ?? null };
 }
 
 function isSignatureStrokes(value: unknown): value is SignatureStrokes {
@@ -324,6 +473,7 @@ export default function OnboardingScreen() {
   const [submitting, setSubmitting] = useState(false);
   const submissionInProgress = useRef(false);
   const [catalogLoading, setCatalogLoading] = useState(true);
+  const [authReady, setAuthReady] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [sectionIndex, setSectionIndex] = useState(0);
   const [submittedSections, setSubmittedSections] = useState<Partial<Record<OnboardingSection, string>>>({});
@@ -341,23 +491,10 @@ export default function OnboardingScreen() {
   const [licenseStateModal, setLicenseStateModal] = useState(false);
   const [primaryStateModal, setPrimaryStateModal] = useState(false);
 
-  const [empCompany, setEmpCompany] = useState('');
-  const [empJobTitle, setEmpJobTitle] = useState('');
-  const [empSupervisor, setEmpSupervisor] = useState('');
-  const [empTelephone, setEmpTelephone] = useState('');
-  const [empAddress, setEmpAddress] = useState('');
-  const [empDuration, setEmpDuration] = useState('');
-  const [empLeaving, setEmpLeaving] = useState('');
-
-  const [eduCountry, setEduCountry] = useState<Option | null>(null);
+  const [experienceEntries, setExperienceEntries] = useState<ExperienceDraft[]>([emptyExperience()]);
+  const [educationEntries, setEducationEntries] = useState<EducationDraft[]>([emptyEducation()]);
+  const [activeEducationIndex, setActiveEducationIndex] = useState(0);
   const [eduCountryModal, setEduCountryModal] = useState(false);
-  const [eduState, setEduState] = useState('');
-  const [eduInstitute, setEduInstitute] = useState('');
-  const [eduDegree, setEduDegree] = useState('');
-  const [eduMajors, setEduMajors] = useState('');
-  const [eduCity, setEduCity] = useState('');
-  const [eduDuration, setEduDuration] = useState('');
-  const [eduGraduated, setEduGraduated] = useState<'true' | 'false' | ''>('');
 
   const [attachmentFiles, setAttachmentFiles] = useState<AttachmentFiles>(emptyAttachments);
   const [otherDocs, setOtherDocs] = useState<OtherDocDraft[]>([emptyOtherDoc()]);
@@ -365,16 +502,13 @@ export default function OnboardingScreen() {
   const [resume, setResume] = useState<SelectedUpload | null>(null);
   const [citizenship, setCitizenship] = useState<'citizen_of_US' | 'non_citizen_of_US' | 'permanent_resident' | 'noncitizen_authorized'>('citizen_of_US');
   const [uscis, setUscis] = useState('');
-  const [passportNumber, setPassportNumber] = useState('');
   const [workAuthorizationExpiry, setWorkAuthorizationExpiry] = useState('');
-  const [eevDocumentExpiry, setEevDocumentExpiry] = useState('');
-  const [eevGroup, setEevGroup] = useState<AttachmentGroup | null>(null);
+  const [eevDocPath, setEevDocPath] = useState<EevDocPath>('IA');
   const [eevCategory, setEevCategory] = useState<AttachmentCategory | null>(null);
   const [eevSecondCategory, setEevSecondCategory] = useState<AttachmentCategory | null>(null);
   const [eevFile, setEevFile] = useState<SelectedUpload | null>(null);
   const [eevSecondFile, setEevSecondFile] = useState<SelectedUpload | null>(null);
   const [eevCategoryModal, setEevCategoryModal] = useState(false);
-  const [eevGroupModal, setEevGroupModal] = useState(false);
   const [eevSecondCategoryModal, setEevSecondCategoryModal] = useState(false);
 
   const [emergencyName, setEmergencyName] = useState('');
@@ -382,12 +516,7 @@ export default function OnboardingScreen() {
   const [emergencyAddress, setEmergencyAddress] = useState('');
   const [emergencyRelationship, setEmergencyRelationship] = useState('');
 
-  const [referenceEmployer, setReferenceEmployer] = useState('');
-  const [referenceJobTitle, setReferenceJobTitle] = useState('');
-  const [referenceEmail, setReferenceEmail] = useState('');
-  const [referencePhone, setReferencePhone] = useState('');
-  const [referencePosition, setReferencePosition] = useState('');
-  const [referenceContact, setReferenceContact] = useState('');
+  const [referenceEntries, setReferenceEntries] = useState<ReferenceDraft[]>([emptyReference()]);
   const [referenceName, setReferenceName] = useState('');
   const [referenceSignature, setReferenceSignature] = useState('');
   const [referenceSignatureStrokes, setReferenceSignatureStrokes] = useState<SignatureStrokes>([]);
@@ -398,21 +527,12 @@ export default function OnboardingScreen() {
 
   const draftJson = JSON.stringify({
     licenseEntries,
-    empCompany,
-    empJobTitle,
-    empSupervisor,
-    empTelephone,
-    empAddress,
-    empDuration,
-    empLeaving,
-    eduCountry,
-    eduState,
-    eduInstitute,
-    eduDegree,
-    eduMajors,
-    eduCity,
-    eduDuration,
-    eduGraduated,
+    experienceEntries,
+    educationEntries,
+    referenceEntries,
+    referenceName,
+    referenceSignature,
+    referenceSignatureStrokes,
     attachmentFiles: Object.fromEntries(
       Object.entries(attachmentFiles).map(([key, file]) => [
         key,
@@ -429,10 +549,8 @@ export default function OnboardingScreen() {
     resume: resume ? { uri: resume.uri, name: resume.name, mimeType: resume.mimeType, size: resume.size } : null,
     citizenship,
     uscis,
-    passportNumber,
     workAuthorizationExpiry,
-    eevDocumentExpiry,
-    eevGroup,
+    eevDocPath,
     eevCategory,
     eevSecondCategory,
     eevFile: eevFile ? { uri: eevFile.uri, name: eevFile.name, mimeType: eevFile.mimeType, size: eevFile.size } : null,
@@ -443,15 +561,6 @@ export default function OnboardingScreen() {
     emergencyPhone,
     emergencyAddress,
     emergencyRelationship,
-    referenceEmployer,
-    referenceJobTitle,
-    referenceEmail,
-    referencePhone,
-    referencePosition,
-    referenceContact,
-    referenceName,
-    referenceSignature,
-    referenceSignatureStrokes,
     sanctioned,
     sanctionedExplain,
     pendingAction,
@@ -485,24 +594,59 @@ export default function OnboardingScreen() {
         expiryDate: text('expiryDate'),
       }]);
     }
-    setEmpCompany(text('empCompany'));
-    setEmpJobTitle(text('empJobTitle'));
-    setEmpSupervisor(text('empSupervisor'));
-    setEmpTelephone(normalizePhoneInput(text('empTelephone')));
-    setEmpAddress(text('empAddress'));
-    setEmpDuration(decimalInput(text('empDuration'), 3));
-    setEmpLeaving(text('empLeaving'));
-    if (isOption(draft.eduCountry)) setEduCountry(draft.eduCountry);
-    setEduState(text('eduState'));
-    setEduInstitute(text('eduInstitute'));
-    setEduDegree(text('eduDegree'));
-    setEduMajors(text('eduMajors'));
-    setEduCity(text('eduCity'));
-    setEduDuration(decimalInput(text('eduDuration'), 3));
-    if (draft.eduGraduated === 'true' || draft.eduGraduated === 'false') {
-      setEduGraduated(draft.eduGraduated);
-    } else {
-      setEduGraduated('');
+    if (Array.isArray(draft.experienceEntries) && draft.experienceEntries.length) {
+      const restored = draft.experienceEntries
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+        .map((item) => ({
+          company: typeof item.company === 'string' ? item.company : '',
+          jobTitle: typeof item.jobTitle === 'string' ? item.jobTitle : '',
+          supervisor: typeof item.supervisor === 'string' ? item.supervisor : '',
+          telephone: normalizePhoneInput(typeof item.telephone === 'string' ? item.telephone : ''),
+          address: typeof item.address === 'string' ? item.address : '',
+          duration: decimalInput(typeof item.duration === 'string' ? item.duration : '', 3),
+          leaving: typeof item.leaving === 'string' ? item.leaving : '',
+        }));
+      setExperienceEntries(restored.length ? restored : [emptyExperience()]);
+    } else if (text('empCompany') || text('empJobTitle')) {
+      // Migrate drafts saved before multi-experience support.
+      setExperienceEntries([{
+        company: text('empCompany'),
+        jobTitle: text('empJobTitle'),
+        supervisor: text('empSupervisor'),
+        telephone: normalizePhoneInput(text('empTelephone')),
+        address: text('empAddress'),
+        duration: decimalInput(text('empDuration'), 3),
+        leaving: text('empLeaving'),
+      }]);
+    }
+    if (Array.isArray(draft.educationEntries) && draft.educationEntries.length) {
+      const restored: EducationDraft[] = draft.educationEntries
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+        .map((item) => ({
+          country: isOption(item.country) ? item.country : null,
+          state: typeof item.state === 'string' ? item.state : '',
+          institute: typeof item.institute === 'string' ? item.institute : '',
+          degree: typeof item.degree === 'string' ? item.degree : '',
+          majors: typeof item.majors === 'string' ? item.majors : '',
+          city: typeof item.city === 'string' ? item.city : '',
+          duration: decimalInput(typeof item.duration === 'string' ? item.duration : '', 3),
+          graduated: item.graduated === 'true' || item.graduated === 'false' ? item.graduated : '',
+        }));
+      setEducationEntries(restored.length ? restored : [emptyEducation()]);
+    } else if (text('eduInstitute') || text('eduDegree') || isOption(draft.eduCountry)) {
+      // Migrate drafts saved before multi-education support.
+      const graduated: EducationDraft['graduated'] =
+        draft.eduGraduated === 'true' || draft.eduGraduated === 'false' ? draft.eduGraduated : '';
+      setEducationEntries([{
+        country: isOption(draft.eduCountry) ? draft.eduCountry : null,
+        state: text('eduState'),
+        institute: text('eduInstitute'),
+        degree: text('eduDegree'),
+        majors: text('eduMajors'),
+        city: text('eduCity'),
+        duration: decimalInput(text('eduDuration'), 3),
+        graduated,
+      }]);
     }
     if (draft.attachmentFiles && typeof draft.attachmentFiles === 'object') {
       const savedFiles = draft.attachmentFiles as Record<string, unknown>;
@@ -534,10 +678,15 @@ export default function OnboardingScreen() {
       setCitizenship(draft.citizenship as typeof citizenship);
     }
     setUscis(text('uscis'));
-    setPassportNumber(text('passportNumber'));
     setWorkAuthorizationExpiry(text('workAuthorizationExpiry'));
-    setEevDocumentExpiry(text('eevDocumentExpiry'));
-    if (draft.eevGroup === 'IA' || draft.eevGroup === 'AU' || draft.eevGroup === 'ID') setEevGroup(draft.eevGroup);
+    if (draft.eevDocPath === 'IA' || draft.eevDocPath === 'BC') {
+      setEevDocPath(draft.eevDocPath);
+    } else if (draft.eevGroup === 'AU' || draft.eevGroup === 'ID') {
+      // Legacy drafts used IA / AU / ID group picker — map AU/ID to the combined path.
+      setEevDocPath('BC');
+    } else if (draft.eevGroup === 'IA') {
+      setEevDocPath('IA');
+    }
     if (draft.eevCategory && typeof draft.eevCategory === 'object') {
       const category = draft.eevCategory as AttachmentCategory;
       if (typeof category.id === 'number' && typeof category.name === 'string') setEevCategory(category);
@@ -552,16 +701,54 @@ export default function OnboardingScreen() {
     setEmergencyPhone(normalizePhoneInput(text('emergencyPhone')));
     setEmergencyAddress(text('emergencyAddress'));
     setEmergencyRelationship(text('emergencyRelationship'));
-    setReferenceEmployer(text('referenceEmployer'));
-    setReferenceJobTitle(text('referenceJobTitle'));
-    setReferenceEmail(text('referenceEmail'));
-    setReferencePhone(normalizePhoneInput(text('referencePhone')));
-    setReferencePosition(text('referencePosition'));
-    setReferenceContact(text('referenceContact'));
-    setReferenceName(text('referenceName'));
-    setReferenceSignature(text('referenceSignature'));
-    if (isSignatureStrokes(draft.referenceSignatureStrokes)) {
-      setReferenceSignatureStrokes(draft.referenceSignatureStrokes);
+    if (Array.isArray(draft.referenceEntries) && draft.referenceEntries.length) {
+      const restored = draft.referenceEntries
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+        .slice(0, MAX_REFERENCES)
+        .map((item) => ({
+          employer: typeof item.employer === 'string' ? item.employer : '',
+          jobTitle: typeof item.jobTitle === 'string' ? item.jobTitle : '',
+          email: typeof item.email === 'string' ? item.email : '',
+          phone: normalizePhoneInput(typeof item.phone === 'string' ? item.phone : ''),
+          position: typeof item.position === 'string' ? item.position : '',
+          contact: typeof item.contact === 'string' ? item.contact : '',
+        }));
+      setReferenceEntries(restored.length ? restored : [emptyReference()]);
+      // Prefer shared signature fields; fall back to the first entry if an older
+      // multi-reference draft stored name/signature on each row.
+      const first = draft.referenceEntries.find(
+        (item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object',
+      );
+      if (typeof draft.referenceName === 'string' && draft.referenceName) {
+        setReferenceName(draft.referenceName);
+      } else if (first && typeof first.name === 'string') {
+        setReferenceName(first.name);
+      }
+      if (typeof draft.referenceSignature === 'string' && draft.referenceSignature) {
+        setReferenceSignature(draft.referenceSignature);
+      } else if (first && typeof first.signature === 'string') {
+        setReferenceSignature(first.signature);
+      }
+      if (isSignatureStrokes(draft.referenceSignatureStrokes)) {
+        setReferenceSignatureStrokes(draft.referenceSignatureStrokes);
+      } else if (first && isSignatureStrokes(first.signatureStrokes)) {
+        setReferenceSignatureStrokes(first.signatureStrokes);
+      }
+    } else if (text('referenceEmployer') || text('referenceName')) {
+      // Migrate drafts saved before multi-reference support.
+      setReferenceEntries([{
+        employer: text('referenceEmployer'),
+        jobTitle: text('referenceJobTitle'),
+        email: text('referenceEmail'),
+        phone: normalizePhoneInput(text('referencePhone')),
+        position: text('referencePosition'),
+        contact: text('referenceContact'),
+      }]);
+      setReferenceName(text('referenceName'));
+      setReferenceSignature(text('referenceSignature'));
+      if (isSignatureStrokes(draft.referenceSignatureStrokes)) {
+        setReferenceSignatureStrokes(draft.referenceSignatureStrokes);
+      }
     }
     setSanctioned(text('sanctioned'));
     setSanctionedExplain(text('sanctionedExplain'));
@@ -575,7 +762,37 @@ export default function OnboardingScreen() {
     }
   }, []);
 
+  // Refreshing / deep-linking into onboarding skips the splash screen, so the
+  // in-memory auth store is empty even when accessToken is still in storage.
+  // Restore the session before any authenticated professional API calls.
   useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const status = await restoreSession(true);
+        if (!active) return;
+        if (status === 'signedOut') {
+          router.replace('/(auth)/sign-in');
+          return;
+        }
+        setAuthReady(true);
+      } catch (restoreError) {
+        if (!active) return;
+        setCatalogError(
+          restoreError instanceof Error
+            ? restoreError.message
+            : 'Unable to restore your session. Sign in again to continue onboarding.',
+        );
+        setCatalogLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [router]);
+
+  useEffect(() => {
+    if (!authReady) return;
     let active = true;
     void (async () => {
       try {
@@ -601,11 +818,34 @@ export default function OnboardingScreen() {
         // resumes after login on this or another device.
         const draft = serverDraft ?? localDraft;
         if (draft) {
+          const hadWebOnlyUploads = (() => {
+            if (Platform.OS !== 'web') return false;
+            const files: unknown[] = [
+              draft.resume,
+              draft.eevFile,
+              draft.eevSecondFile,
+              ...(Array.isArray(draft.otherDocs) ? draft.otherDocs.map((item) => (
+                item && typeof item === 'object' ? (item as { file?: unknown }).file : null
+              )) : []),
+            ];
+            if (draft.attachmentFiles && typeof draft.attachmentFiles === 'object') {
+              files.push(...Object.values(draft.attachmentFiles as Record<string, unknown>));
+            }
+            return files.some((file) => {
+              if (!file || typeof file !== 'object') return false;
+              const uri = (file as { uri?: unknown }).uri;
+              return typeof uri === 'string' && (uri.startsWith('blob:') || uri.startsWith('data:'));
+            });
+          })();
           applyDraft(draft);
           if (serverDraft) {
             await setLocalStorageItem(DRAFT_KEY, JSON.stringify(serverDraft)).catch(() => undefined);
           }
-          setNotice('Your saved onboarding progress was restored. Continue where you left off.');
+          setNotice(
+            hadWebOnlyUploads
+              ? 'Your saved progress was restored, but uploaded files must be selected again in the browser before Submit.'
+              : 'Your saved onboarding progress was restored. Continue where you left off.',
+          );
         }
       } catch (loadError: unknown) {
         if (active) {
@@ -622,7 +862,7 @@ export default function OnboardingScreen() {
     return () => {
       active = false;
     };
-  }, [applyDraft]);
+  }, [applyDraft, authReady]);
 
   useEffect(() => {
     if (!draftLoaded) return;
@@ -673,10 +913,15 @@ export default function OnboardingScreen() {
           throw new Error('The server returned invalid employment document types.');
         }
         categories.push(
-          ...response.data.map((option) => ({ ...option, category: ATTACHMENT_GROUPS[index].id })),
+          ...response.data.map((option) => ({
+            id: Number(option.id),
+            name: String(option.name ?? ''),
+            category: ATTACHMENT_GROUPS[index].id,
+          })),
         );
       });
       setAttachmentCategories(categories);
+      setCatalogError(null);
     } catch (loadError) {
       setCatalogError(loadError instanceof Error ? loadError.message : 'Unable to load onboarding options.');
     } finally {
@@ -685,9 +930,11 @@ export default function OnboardingScreen() {
   }, []);
 
   useEffect(() => {
+    if (!authReady) return;
+    setCatalogLoading(true);
     const timer = setTimeout(() => void loadCatalogs(), 0);
     return () => clearTimeout(timer);
-  }, [loadCatalogs]);
+  }, [authReady, loadCatalogs]);
 
   const retryCatalogs = () => {
     setCatalogLoading(true);
@@ -742,6 +989,61 @@ export default function OnboardingScreen() {
     });
   };
 
+  const appendExperienceEntry = (formData: FormData, sectionIndex: number, entry: ExperienceDraft) => {
+    appendSectionValue(formData, sectionIndex, 'company', entry.company.trim());
+    appendSectionValue(formData, sectionIndex, 'job_title', entry.jobTitle.trim());
+    appendSectionValue(formData, sectionIndex, 'supervisor', entry.supervisor.trim());
+    appendSectionValue(formData, sectionIndex, 'telephone', entry.telephone.trim());
+    appendSectionValue(formData, sectionIndex, 'address', entry.address.trim());
+    appendSectionValue(formData, sectionIndex, 'duration', entry.duration.trim());
+    appendSectionValue(formData, sectionIndex, 'leaving_reason', entry.leaving.trim());
+  };
+
+  const appendEducationEntry = (formData: FormData, sectionIndex: number, entry: EducationDraft) => {
+    if (!entry.country) throw new Error('Complete all required education fields before saving.');
+    appendSectionValue(formData, sectionIndex, 'country', entry.country.id);
+    appendSectionValue(formData, sectionIndex, 'state', entry.state.trim());
+    appendSectionValue(formData, sectionIndex, 'institute', entry.institute.trim());
+    appendSectionValue(formData, sectionIndex, 'degree', entry.degree.trim());
+    appendSectionValue(formData, sectionIndex, 'majors', entry.majors.trim());
+    appendSectionValue(formData, sectionIndex, 'city', entry.city.trim());
+    appendSectionValue(formData, sectionIndex, 'duration', entry.duration.trim());
+    appendSectionValue(formData, sectionIndex, 'graduated', entry.graduated === 'true');
+  };
+
+  const appendReferenceEntry = (formData: FormData, sectionIndex: number, entry: ReferenceDraft) => {
+    appendSectionValue(formData, sectionIndex, 'employer', entry.employer.trim());
+    appendSectionValue(formData, sectionIndex, 'job_title', entry.jobTitle.trim());
+    if (entry.email.trim()) {
+      appendSectionValue(formData, sectionIndex, 'email', entry.email.trim());
+    }
+    appendSectionValue(formData, sectionIndex, 'phone', entry.phone.trim());
+    appendSectionValue(formData, sectionIndex, 'position', entry.position.trim());
+    appendSectionValue(formData, sectionIndex, 'contact_person', entry.contact.trim());
+    // Statement + signature are collected once and applied to every reference.
+    appendSectionValue(formData, sectionIndex, 'name', referenceName.trim());
+    appendSectionValue(formData, sectionIndex, 'signature', referenceSignature.trim());
+    appendSectionValue(formData, sectionIndex, 'agree', true);
+  };
+
+  const updateExperienceEntry = (index: number, patch: Partial<ExperienceDraft>) => {
+    setExperienceEntries((current) => current.map((entry, entryIndex) => (
+      entryIndex === index ? { ...entry, ...patch } : entry
+    )));
+  };
+
+  const updateEducationEntry = (index: number, patch: Partial<EducationDraft>) => {
+    setEducationEntries((current) => current.map((entry, entryIndex) => (
+      entryIndex === index ? { ...entry, ...patch } : entry
+    )));
+  };
+
+  const updateReferenceEntry = (index: number, patch: Partial<ReferenceDraft>) => {
+    setReferenceEntries((current) => current.map((entry, entryIndex) => (
+      entryIndex === index ? { ...entry, ...patch } : entry
+    )));
+  };
+
   const appendOnboardingSection = async (
     formData: FormData,
     sectionIndex: number,
@@ -754,26 +1056,18 @@ export default function OnboardingScreen() {
         appendLicenseEntry(formData, sectionIndex, entry);
         return;
       }
-      case 'experience':
-        appendSectionValue(formData, sectionIndex, 'company', empCompany.trim());
-        appendSectionValue(formData, sectionIndex, 'job_title', empJobTitle.trim());
-        appendSectionValue(formData, sectionIndex, 'supervisor', empSupervisor.trim());
-        appendSectionValue(formData, sectionIndex, 'telephone', empTelephone.trim());
-        appendSectionValue(formData, sectionIndex, 'address', empAddress.trim());
-        appendSectionValue(formData, sectionIndex, 'duration', empDuration.trim());
-        appendSectionValue(formData, sectionIndex, 'leaving_reason', empLeaving.trim());
+      case 'experience': {
+        const entry = experienceEntries.find(experienceIsComplete) || experienceEntries[0];
+        if (!entry) throw new Error('Complete all required work experience fields before saving.');
+        appendExperienceEntry(formData, sectionIndex, entry);
         return;
-      case 'education':
-        if (!eduCountry) throw new Error('Complete all required education fields before saving.');
-        appendSectionValue(formData, sectionIndex, 'country', eduCountry.id);
-        appendSectionValue(formData, sectionIndex, 'state', eduState.trim());
-        appendSectionValue(formData, sectionIndex, 'institute', eduInstitute.trim());
-        appendSectionValue(formData, sectionIndex, 'degree', eduDegree.trim());
-        appendSectionValue(formData, sectionIndex, 'majors', eduMajors.trim());
-        appendSectionValue(formData, sectionIndex, 'city', eduCity.trim());
-        appendSectionValue(formData, sectionIndex, 'duration', eduDuration.trim());
-        appendSectionValue(formData, sectionIndex, 'graduated', eduGraduated === 'true');
+      }
+      case 'education': {
+        const entry = educationEntries.find(educationIsComplete) || educationEntries[0];
+        if (!entry?.country) throw new Error('Complete all required education fields before saving.');
+        appendEducationEntry(formData, sectionIndex, entry);
         return;
+      }
       case 'documents': {
         const formattedCprExpiry = normalizeApiDate(cprExpiry);
         for (const [key, file] of Object.entries(attachmentFiles)) {
@@ -795,16 +1089,29 @@ export default function OnboardingScreen() {
         return;
       case 'eligibility': {
         const formattedWorkAuthorizationExpiry = normalizeApiDate(workAuthorizationExpiry);
-        const formattedDocumentExpiry = normalizeApiDate(eevDocumentExpiry);
-        if (!eevCategory || !eevFile) {
-          throw new Error('Choose an employment document type and upload the required document.');
+        if (!eevCategory) {
+          throw new Error(
+            eevDocPath === 'IA'
+              ? 'Select a document type that establishes both identity and employment eligibility.'
+              : 'Select an identity document type.',
+          );
+        }
+        if (!eevFile) {
+          throw new Error(
+            eevDocPath === 'IA'
+              ? 'Upload the selected document.'
+              : 'Upload the identity document.',
+          );
+        }
+        if (eevDocPath === 'BC' && !eevSecondCategory) {
+          throw new Error('Select an employment authorization document type.');
+        }
+        if (eevDocPath === 'BC' && !eevSecondFile) {
+          throw new Error('Upload the employment authorization document.');
         }
         appendSectionValue(formData, sectionIndex, 'category_1', eevCategory.id);
         await appendSectionUpload(formData, sectionIndex, 'file_1', eevFile);
-        if (formattedDocumentExpiry) {
-          appendSectionValue(formData, sectionIndex, 'expiry_date_1', formattedDocumentExpiry);
-        }
-        if (eevSecondCategory && eevSecondFile) {
+        if (eevDocPath === 'BC' && eevSecondCategory && eevSecondFile) {
           appendSectionValue(formData, sectionIndex, 'category_2', eevSecondCategory.id);
           await appendSectionUpload(formData, sectionIndex, 'file_2', eevSecondFile);
         }
@@ -819,7 +1126,6 @@ export default function OnboardingScreen() {
           if (!formattedWorkAuthorizationExpiry) {
             throw new Error('Select a valid work authorization expiry date.');
           }
-          appendSectionValue(formData, sectionIndex, 'passport_no', passportNumber.trim());
           appendSectionValue(formData, sectionIndex, 'expire_date', formattedWorkAuthorizationExpiry);
         }
         return;
@@ -830,19 +1136,12 @@ export default function OnboardingScreen() {
         appendSectionValue(formData, sectionIndex, 'address', emergencyAddress.trim());
         appendSectionValue(formData, sectionIndex, 'relation_ship', emergencyRelationship.trim());
         return;
-      case 'references':
-        appendSectionValue(formData, sectionIndex, 'employer', referenceEmployer.trim());
-        appendSectionValue(formData, sectionIndex, 'job_title', referenceJobTitle.trim());
-        if (referenceEmail.trim()) {
-          appendSectionValue(formData, sectionIndex, 'email', referenceEmail.trim());
-        }
-        appendSectionValue(formData, sectionIndex, 'phone', referencePhone.trim());
-        appendSectionValue(formData, sectionIndex, 'position', referencePosition.trim());
-        appendSectionValue(formData, sectionIndex, 'contact_person', referenceContact.trim());
-        appendSectionValue(formData, sectionIndex, 'name', referenceName.trim());
-        appendSectionValue(formData, sectionIndex, 'signature', referenceSignature.trim());
-        appendSectionValue(formData, sectionIndex, 'agree', true);
+      case 'references': {
+        const entry = referenceEntries.find(referenceIsComplete) || referenceEntries[0];
+        if (!entry) throw new Error('Complete the reference fields and save your signature before saving.');
+        appendReferenceEntry(formData, sectionIndex, entry);
         return;
+      }
     }
   };
 
@@ -887,24 +1186,38 @@ export default function OnboardingScreen() {
       return;
     }
     if (section === 'experience') {
-      if (!empCompany.trim() || !empJobTitle.trim() || !empSupervisor.trim() || !empTelephone.trim() || !empAddress.trim() || !empDuration.trim() || !empLeaving.trim()) {
-        throw new Error('Complete all required work experience fields before continuing.');
+      const started = experienceEntries.filter(experienceHasAnyValue);
+      if (!started.length) {
+        throw new Error('Add at least one work experience before continuing.');
       }
-      if (!/^\d{1,3}(\.\d)?$/.test(empDuration.trim()) || Number(empDuration) > 999.9) {
-        throw new Error('Duration must be a number from 0 to 999.9, with up to one decimal place.');
+      for (const entry of started) {
+        if (!experienceIsComplete(entry)) {
+          if (!/^\d{1,3}(\.\d)?$/.test(entry.duration.trim()) || Number(entry.duration) > 999.9) {
+            throw new Error('Duration must be a number from 0 to 999.9, with up to one decimal place.');
+          }
+          if (entry.telephone.trim() && !isValidUsPhone(entry.telephone)) {
+            throw new Error(`Telephone: ${US_PHONE_ERROR}`);
+          }
+          throw new Error('Complete all fields for each experience you started, or clear unused experience rows.');
+        }
       }
-      if (!isValidUsPhone(empTelephone)) throw new Error(`Telephone: ${US_PHONE_ERROR}`);
       return;
     }
     if (section === 'education') {
-      if (!eduCountry || !eduInstitute.trim() || !eduDegree.trim() || !eduMajors.trim() || !eduCity.trim() || !eduState.trim() || !eduDuration.trim()) {
-        throw new Error('Complete all required education fields before continuing.');
+      const started = educationEntries.filter(educationHasAnyValue);
+      if (!started.length) {
+        throw new Error('Add at least one education record before continuing.');
       }
-      if (!/^\d{1,3}(\.\d)?$/.test(eduDuration.trim()) || Number(eduDuration) > 999.9) {
-        throw new Error('Education duration must be a number from 0 to 999.9, with up to one decimal place.');
-      }
-      if (eduGraduated !== 'true' && eduGraduated !== 'false') {
-        throw new Error('Select whether you graduated.');
+      for (const entry of started) {
+        if (!educationIsComplete(entry)) {
+          if (!/^\d{1,3}(\.\d)?$/.test(entry.duration.trim()) || Number(entry.duration) > 999.9) {
+            throw new Error('Education duration must be a number from 0 to 999.9, with up to one decimal place.');
+          }
+          if (entry.graduated !== 'true' && entry.graduated !== 'false') {
+            throw new Error('Select whether you graduated for each education record.');
+          }
+          throw new Error('Complete all fields for each education record you started, or clear unused rows.');
+        }
       }
       return;
     }
@@ -934,20 +1247,31 @@ export default function OnboardingScreen() {
       return;
     }
     if (section === 'eligibility') {
-      if (!eevGroup || !eevCategory || !eevFile) {
-        throw new Error('Choose an employment document type and upload the required document.');
+      if (!eevCategory) {
+        throw new Error(
+          eevDocPath === 'IA'
+            ? 'Select a document type that establishes both identity and employment eligibility.'
+            : 'Select an identity document type.',
+        );
       }
-      if (eevGroup !== 'IA' && (!eevSecondCategory || !eevSecondFile)) {
-        throw new Error('This document type requires both identity and work authorization files.');
+      if (!eevFile) {
+        throw new Error(
+          eevDocPath === 'IA'
+            ? 'Upload the selected document.'
+            : 'Upload the identity document.',
+        );
+      }
+      if (eevDocPath === 'BC' && !eevSecondCategory) {
+        throw new Error('Select an employment authorization document type.');
+      }
+      if (eevDocPath === 'BC' && !eevSecondFile) {
+        throw new Error('Upload the employment authorization document.');
       }
       if (citizenship === 'permanent_resident' && !uscis.trim()) {
         throw new Error('Enter your USCIS or A-number.');
       }
-      if (citizenship === 'noncitizen_authorized' && (!passportNumber.trim() || !normalizeApiDate(workAuthorizationExpiry))) {
-        throw new Error('Enter your passport number and select a valid work authorization expiry date.');
-      }
-      if (eevFile && eevDocumentExpiry.trim() && !normalizeApiDate(eevDocumentExpiry)) {
-        throw new Error('Select a valid document expiry date.');
+      if (citizenship === 'noncitizen_authorized' && !normalizeApiDate(workAuthorizationExpiry)) {
+        throw new Error('Select a valid work authorization expiry date.');
       }
       return;
     }
@@ -960,14 +1284,37 @@ export default function OnboardingScreen() {
       }
       return;
     }
-    if (!referenceEmployer.trim() || !referenceJobTitle.trim() || !referencePhone.trim() || !referencePosition.trim() || !referenceContact.trim() || !referenceName.trim() || !referenceSignature.trim()) {
-      throw new Error('Complete the reference fields and save your signature before continuing.');
-    }
-    if (referenceEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(referenceEmail.trim())) {
-      throw new Error('Enter a valid reference email address.');
-    }
-    if (!isValidUsPhone(referencePhone)) {
-      throw new Error(`Reference phone: ${US_PHONE_ERROR}`);
+    if (section === 'references') {
+      const started = referenceEntries.filter(referenceHasAnyValue);
+      if (!started.length) {
+        throw new Error('Add at least one reference before continuing.');
+      }
+      if (started.length > MAX_REFERENCES) {
+        throw new Error(`You can add a maximum of ${MAX_REFERENCES} references.`);
+      }
+      for (const entry of started) {
+        if (!referenceIsComplete(entry)) {
+          if (entry.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(entry.email.trim())) {
+            throw new Error('Enter a valid reference email address.');
+          }
+          if (entry.phone.trim() && !isValidUsPhone(entry.phone)) {
+            throw new Error(`Reference phone: ${US_PHONE_ERROR}`);
+          }
+          throw new Error('Complete all fields for each reference you started, or clear unused rows.');
+        }
+      }
+      if (!referenceName.trim() || !referenceSignature.trim()) {
+        throw new Error('Enter your name and save your signature before continuing.');
+      }
+      if (!sanctioned || !pendingAction) {
+        throw new Error('Answer the license / certification questions before continuing.');
+      }
+      if (sanctioned === 'YES' && !sanctionedExplain.trim()) {
+        throw new Error('Please explain any sanctions or disciplinary actions.');
+      }
+      if (pendingAction === 'YES' && !pendingActionExplain.trim()) {
+        throw new Error('Please explain any pending license actions.');
+      }
     }
   };
 
@@ -984,9 +1331,26 @@ export default function OnboardingScreen() {
           entry.expiryDate,
         ])));
       case 'experience':
-        return JSON.stringify([empCompany, empJobTitle, empSupervisor, empTelephone, empAddress, empDuration, empLeaving]);
+        return JSON.stringify(experienceEntries.map((entry) => ([
+          entry.company,
+          entry.jobTitle,
+          entry.supervisor,
+          entry.telephone,
+          entry.address,
+          entry.duration,
+          entry.leaving,
+        ])));
       case 'education':
-        return JSON.stringify([eduCountry?.id, eduState, eduInstitute, eduDegree, eduMajors, eduCity, eduDuration, eduGraduated]);
+        return JSON.stringify(educationEntries.map((entry) => ([
+          entry.country?.id,
+          entry.state,
+          entry.institute,
+          entry.degree,
+          entry.majors,
+          entry.city,
+          entry.duration,
+          entry.graduated,
+        ])));
       case 'documents':
         return JSON.stringify([
           uploads(Object.values(attachmentFiles)),
@@ -996,11 +1360,35 @@ export default function OnboardingScreen() {
       case 'resume':
         return JSON.stringify(uploadFingerprint(resume));
       case 'eligibility':
-        return JSON.stringify([citizenship, uscis, passportNumber, workAuthorizationExpiry, eevDocumentExpiry, eevGroup, eevCategory?.id, eevSecondCategory?.id, uploadFingerprint(eevFile), uploadFingerprint(eevSecondFile)]);
+        return JSON.stringify([
+          citizenship,
+          uscis,
+          workAuthorizationExpiry,
+          eevDocPath,
+          eevCategory?.id,
+          eevSecondCategory?.id,
+          uploadFingerprint(eevFile),
+          uploadFingerprint(eevSecondFile),
+        ]);
       case 'emergency':
         return JSON.stringify([emergencyName, emergencyPhone, emergencyAddress, emergencyRelationship]);
       case 'references':
-        return JSON.stringify([referenceEmployer, referenceJobTitle, referenceEmail, referencePhone, referencePosition, referenceContact, referenceName, referenceSignature, sanctioned, sanctionedExplain, pendingAction, pendingActionExplain]);
+        return JSON.stringify([
+          referenceEntries.map((entry) => ([
+            entry.employer,
+            entry.jobTitle,
+            entry.email,
+            entry.phone,
+            entry.position,
+            entry.contact,
+          ])),
+          referenceName,
+          referenceSignature,
+          sanctioned,
+          sanctionedExplain,
+          pendingAction,
+          pendingActionExplain,
+        ]);
     }
   };
 
@@ -1058,14 +1446,18 @@ export default function OnboardingScreen() {
 
       type PendingItem =
         | { kind: 'section'; id: OnboardingSection; fingerprint: string }
-        | { kind: 'license'; entry: LicenseDraft; fingerprint: string; key: string };
+        | { kind: 'license'; entry: LicenseDraft; fingerprint: string; key: string }
+        | { kind: 'experience'; entry: ExperienceDraft; fingerprint: string; key: string }
+        | { kind: 'education'; entry: EducationDraft; fingerprint: string; key: string }
+        | { kind: 'reference'; entry: ReferenceDraft; fingerprint: string; key: string };
 
       const pending: PendingItem[] = [];
       for (const { id } of ONBOARDING_SECTIONS) {
+        const fingerprint = fingerprintForSection(id);
+        if (submittedSections[id] === fingerprint) continue;
+
         if (id === 'license') {
           if (licenseEmpty) continue;
-          const fingerprint = fingerprintForSection(id);
-          if (submittedSections[id] === fingerprint) continue;
           completeLicenses.forEach((entry, index) => {
             pending.push({
               kind: 'license',
@@ -1076,10 +1468,40 @@ export default function OnboardingScreen() {
           });
           continue;
         }
-        const fingerprint = fingerprintForSection(id);
-        if (submittedSections[id] !== fingerprint) {
-          pending.push({ kind: 'section', id, fingerprint });
+        if (id === 'experience') {
+          experienceEntries.filter(experienceIsComplete).forEach((entry, index) => {
+            pending.push({
+              kind: 'experience',
+              entry,
+              fingerprint,
+              key: `experience:${index}`,
+            });
+          });
+          continue;
         }
+        if (id === 'education') {
+          educationEntries.filter(educationIsComplete).forEach((entry, index) => {
+            pending.push({
+              kind: 'education',
+              entry,
+              fingerprint,
+              key: `education:${index}`,
+            });
+          });
+          continue;
+        }
+        if (id === 'references') {
+          referenceEntries.filter(referenceIsComplete).forEach((entry, index) => {
+            pending.push({
+              kind: 'reference',
+              entry,
+              fingerprint,
+              key: `reference:${index}`,
+            });
+          });
+          continue;
+        }
+        pending.push({ kind: 'section', id, fingerprint });
       }
 
       if (pending.length) {
@@ -1090,6 +1512,33 @@ export default function OnboardingScreen() {
               key: item.key,
               appendFields: (formData, sectionIndex) => {
                 appendLicenseEntry(formData, sectionIndex, item.entry);
+              },
+            };
+          }
+          if (item.kind === 'experience') {
+            return {
+              type: 'employements' as const,
+              key: item.key,
+              appendFields: (formData, sectionIndex) => {
+                appendExperienceEntry(formData, sectionIndex, item.entry);
+              },
+            };
+          }
+          if (item.kind === 'education') {
+            return {
+              type: 'educations' as const,
+              key: item.key,
+              appendFields: (formData, sectionIndex) => {
+                appendEducationEntry(formData, sectionIndex, item.entry);
+              },
+            };
+          }
+          if (item.kind === 'reference') {
+            return {
+              type: 'references' as const,
+              key: item.key,
+              appendFields: (formData, sectionIndex) => {
+                appendReferenceEntry(formData, sectionIndex, item.entry);
               },
             };
           }
@@ -1115,10 +1564,19 @@ export default function OnboardingScreen() {
             : failedItem?.kind === 'license'
               || (typeof failed.sectionKey === 'string' && failed.sectionKey.startsWith('license'))
               ? 'license'
-              : typeof failed.sectionKey === 'string'
-                && ONBOARDING_SECTIONS.some((item) => item.id === failed.sectionKey)
-                ? (failed.sectionKey as OnboardingSection)
-                : null;
+              : failedItem?.kind === 'experience'
+                || (typeof failed.sectionKey === 'string' && failed.sectionKey.startsWith('experience'))
+                ? 'experience'
+                : failedItem?.kind === 'education'
+                  || (typeof failed.sectionKey === 'string' && failed.sectionKey.startsWith('education'))
+                  ? 'education'
+                  : failedItem?.kind === 'reference'
+                    || (typeof failed.sectionKey === 'string' && failed.sectionKey.startsWith('reference'))
+                    ? 'references'
+                    : typeof failed.sectionKey === 'string'
+                      && ONBOARDING_SECTIONS.some((item) => item.id === failed.sectionKey)
+                      ? (failed.sectionKey as OnboardingSection)
+                      : null;
           if (failedId) {
             const uiIndex = ONBOARDING_SECTIONS.findIndex((item) => item.id === failedId);
             if (uiIndex >= 0) setSectionIndex(uiIndex);
@@ -1130,6 +1588,9 @@ export default function OnboardingScreen() {
         pending.forEach((item) => {
           if (item.kind === 'section') updatedSections[item.id] = item.fingerprint;
           if (item.kind === 'license') updatedSections.license = item.fingerprint;
+          if (item.kind === 'experience') updatedSections.experience = item.fingerprint;
+          if (item.kind === 'education') updatedSections.education = item.fingerprint;
+          if (item.kind === 'reference') updatedSections.references = item.fingerprint;
         });
         setSubmittedSections(updatedSections);
         await persistDraft({ submittedSections: updatedSections });
@@ -1271,59 +1732,197 @@ export default function OnboardingScreen() {
   const renderExperience = () => (
     <View style={styles.form}>
       <SectionHeading title="Work Experience" icon="work" />
-      <Text style={styles.helpText}>Add your most recent employer, assignment, or volunteer activity.</Text>
-      <IconTextInput {...fieldColors} icon="business" placeholder="Company / Institute Name *" value={empCompany} onChangeText={setEmpCompany} />
-      <IconTextInput {...fieldColors} icon="work" placeholder="Job Title *" value={empJobTitle} onChangeText={setEmpJobTitle} />
-      <IconTextInput {...fieldColors} icon="person" placeholder="Supervisor *" value={empSupervisor} onChangeText={setEmpSupervisor} />
-      <IconTextInput
-        {...fieldColors}
-        icon="phone"
-        placeholder="Telephone *"
-        value={formatPhoneNumber(empTelephone)}
-        onChangeText={(value) => setEmpTelephone(normalizePhoneInput(value))}
-        keyboardType="phone-pad"
-        maxLength={US_PHONE_INPUT_MAX_LENGTH}
-      />
-      <IconTextInput {...fieldColors} icon="schedule" placeholder="Duration in years (e.g. 3.5) *" value={empDuration} onChangeText={(value) => setEmpDuration(boundedDecimalInput(value, empDuration, 3, 999.9))} keyboardType="decimal-pad" maxLength={5} />
-      <IconTextInput {...fieldColors} icon="location-on" placeholder="Address *" value={empAddress} onChangeText={setEmpAddress} />
-      <IconTextInput {...fieldColors} icon="description" placeholder="Description *" value={empLeaving} onChangeText={setEmpLeaving} multiline maxLength={2000} />
+     
+      {experienceEntries.map((entry, index) => (
+        <View key={`experience-${index}`} style={styles.licenseCard}>
+          {experienceEntries.length > 1 ? (
+            <View style={styles.licenseCardHeader}>
+              <Text style={styles.licenseCardTitle}>Experience {index + 1}</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setExperienceEntries((current) => current.filter((_, itemIndex) => itemIndex !== index));
+                }}>
+                <MaterialIcons name="delete-outline" size={20} color="#b42318" />
+              </Pressable>
+            </View>
+          ) : null}
+          <IconTextInput
+            {...fieldColors}
+            icon="business"
+            placeholder="Company / Institute Name *"
+            value={entry.company}
+            onChangeText={(value) => updateExperienceEntry(index, { company: value })}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="work"
+            placeholder="Job Title *"
+            value={entry.jobTitle}
+            onChangeText={(value) => updateExperienceEntry(index, { jobTitle: value })}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="person"
+            placeholder="Supervisor *"
+            value={entry.supervisor}
+            onChangeText={(value) => updateExperienceEntry(index, { supervisor: value })}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="phone"
+            placeholder="Telephone *"
+            value={formatPhoneNumber(entry.telephone)}
+            onChangeText={(value) => updateExperienceEntry(index, { telephone: normalizePhoneInput(value) })}
+            keyboardType="phone-pad"
+            maxLength={US_PHONE_INPUT_MAX_LENGTH}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="schedule"
+            placeholder="Duration in years (e.g. 3.5) *"
+            value={entry.duration}
+            onChangeText={(value) => updateExperienceEntry(index, {
+              duration: boundedDecimalInput(value, entry.duration, 3, 999.9),
+            })}
+            keyboardType="decimal-pad"
+            maxLength={5}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="location-on"
+            placeholder="Address *"
+            value={entry.address}
+            onChangeText={(value) => updateExperienceEntry(index, { address: value })}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="description"
+            placeholder="Description *"
+            value={entry.leaving}
+            onChangeText={(value) => updateExperienceEntry(index, { leaving: value })}
+            multiline
+            maxLength={2000}
+          />
+        </View>
+      ))}
+      <Pressable
+        accessibilityRole="button"
+        style={styles.addOtherDoc}
+        onPress={() => setExperienceEntries((current) => [...current, emptyExperience()])}>
+        <MaterialIcons name="add-circle-outline" size={20} color={FORM_PRIMARY} />
+        <Text style={styles.addOtherDocText}>Add another experience</Text>
+      </Pressable>
     </View>
   );
 
   const renderEducation = () => (
     <View style={styles.form}>
       <SectionHeading title="Education" icon="school" />
-      <IconTextInput {...fieldColors} icon="school" placeholder="Degree *" value={eduDegree} onChangeText={setEduDegree} />
-      <IconTextInput {...fieldColors} icon="account-balance" placeholder="School or College *" value={eduInstitute} onChangeText={setEduInstitute} />
-      <IconTextInput {...fieldColors} icon="menu-book" placeholder="Major *" value={eduMajors} onChangeText={setEduMajors} />
-      <IconTextInput {...fieldColors} icon="schedule" placeholder="Duration in years (e.g. 4) *" value={eduDuration} onChangeText={(value) => setEduDuration(boundedDecimalInput(value, eduDuration, 3, 999.9))} keyboardType="decimal-pad" maxLength={5} />
-      <SelectField label="Country" icon="public" value={eduCountry} onPress={() => setEduCountryModal(true)} />
-      <IconTextInput {...fieldColors} icon="location-city" placeholder="City *" value={eduCity} onChangeText={setEduCity} />
-      <IconTextInput {...fieldColors} icon="map" placeholder="State *" value={eduState} onChangeText={setEduState} />
-      <Text style={styles.helpText}>Did you graduate? *</Text>
-      <View style={styles.licenseChoiceRow}>
-        {([
-          { value: 'true' as const, label: 'Yes' },
-          { value: 'false' as const, label: 'No' },
-        ]).map(({ value, label }) => {
-          const selected = eduGraduated === value;
-          return (
-            <Pressable
-              key={value}
-              accessibilityRole="radio"
-              accessibilityState={{ selected }}
-              style={[styles.licenseChoiceOption, selected && styles.licenseChoiceOptionSelected]}
-              onPress={() => setEduGraduated(value)}>
-              <MaterialIcons
-                name={selected ? 'radio-button-checked' : 'radio-button-unchecked'}
-                size={20}
-                color={FORM_PRIMARY}
-              />
-              <Text style={styles.licenseChoiceText}>{label}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      <Text style={styles.helpText}>Add one or more education records.</Text>
+      {educationEntries.map((entry, index) => (
+        <View key={`education-${index}`} style={styles.licenseCard}>
+          {educationEntries.length > 1 ? (
+            <View style={styles.licenseCardHeader}>
+              <Text style={styles.licenseCardTitle}>Education {index + 1}</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setEducationEntries((current) => current.filter((_, itemIndex) => itemIndex !== index));
+                  setActiveEducationIndex((current) => (current >= index ? Math.max(0, current - 1) : current));
+                }}>
+                <MaterialIcons name="delete-outline" size={20} color="#b42318" />
+              </Pressable>
+            </View>
+          ) : null}
+          <IconTextInput
+            {...fieldColors}
+            icon="school"
+            placeholder="Degree *"
+            value={entry.degree}
+            onChangeText={(value) => updateEducationEntry(index, { degree: value })}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="account-balance"
+            placeholder="School or College *"
+            value={entry.institute}
+            onChangeText={(value) => updateEducationEntry(index, { institute: value })}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="menu-book"
+            placeholder="Major *"
+            value={entry.majors}
+            onChangeText={(value) => updateEducationEntry(index, { majors: value })}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="schedule"
+            placeholder="Duration in years (e.g. 4) *"
+            value={entry.duration}
+            onChangeText={(value) => updateEducationEntry(index, {
+              duration: boundedDecimalInput(value, entry.duration, 3, 999.9),
+            })}
+            keyboardType="decimal-pad"
+            maxLength={5}
+          />
+          <SelectField
+            label="Country"
+            icon="public"
+            value={entry.country}
+            onPress={() => {
+              setActiveEducationIndex(index);
+              setEduCountryModal(true);
+            }}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="location-city"
+            placeholder="City *"
+            value={entry.city}
+            onChangeText={(value) => updateEducationEntry(index, { city: value })}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="map"
+            placeholder="State *"
+            value={entry.state}
+            onChangeText={(value) => updateEducationEntry(index, { state: value })}
+          />
+          <Text style={styles.helpText}>Did you graduate? *</Text>
+          <View style={styles.licenseChoiceRow}>
+            {([
+              { value: 'true' as const, label: 'Yes' },
+              { value: 'false' as const, label: 'No' },
+            ]).map(({ value, label }) => {
+              const selected = entry.graduated === value;
+              return (
+                <Pressable
+                  key={value}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  style={[styles.licenseChoiceOption, selected && styles.licenseChoiceOptionSelected]}
+                  onPress={() => updateEducationEntry(index, { graduated: value })}>
+                  <MaterialIcons
+                    name={selected ? 'radio-button-checked' : 'radio-button-unchecked'}
+                    size={20}
+                    color={FORM_PRIMARY}
+                  />
+                  <Text style={styles.licenseChoiceText}>{label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      ))}
+      <Pressable
+        accessibilityRole="button"
+        style={styles.addOtherDoc}
+        onPress={() => setEducationEntries((current) => [...current, emptyEducation()])}>
+        <MaterialIcons name="add-circle-outline" size={20} color={FORM_PRIMARY} />
+        <Text style={styles.addOtherDocText}>Add another education</Text>
+      </Pressable>
     </View>
   );
 
@@ -1450,91 +2049,117 @@ export default function OnboardingScreen() {
     setCitizenship(value);
     if (value !== 'permanent_resident') setUscis('');
     if (value !== 'noncitizen_authorized') {
-      setPassportNumber('');
       setWorkAuthorizationExpiry('');
     }
   };
 
-  const renderEligibility = () => {
-    const selectedGroup = ATTACHMENT_GROUPS.find(({ id }) => id === eevGroup);
-    const secondaryGroup = eevGroup === 'AU' ? 'ID' : 'AU';
-    const secondaryGroupLabel = ATTACHMENT_GROUPS.find(({ id }) => id === secondaryGroup)?.name;
-    return (
-      <View style={styles.form}>
-        <SectionHeading title="Employment Eligibility Verification" icon="verified-user" />
-        <Text style={styles.helpText}>
-          Check one of the following boxes to attest to your citizenship or immigration status.
+  const selectEevDocPath = (path: EevDocPath) => {
+    // Re-tapping the already selected path must not wipe a chosen document type/file.
+    if (path === eevDocPath) return;
+    setEevDocPath(path);
+    setEevCategory(null);
+    setEevSecondCategory(null);
+    setEevFile(null);
+    setEevSecondFile(null);
+  };
+
+  const renderEligibility = () => (
+    <View style={styles.form}>
+      <SectionHeading title="Employment Eligibility Verification" icon="verified-user" />
+      <Text style={styles.helpText}>
+        Check one of the following boxes to attest to your citizenship or immigration status.
+      </Text>
+
+      <Pressable style={styles.checkRow} onPress={() => selectCitizenship('citizen_of_US')}>
+        <MaterialIcons name={citizenship === 'citizen_of_US' ? 'radio-button-checked' : 'radio-button-unchecked'} size={21} color={FORM_PRIMARY} />
+        <Text style={styles.choiceText}>A citizen of the United States</Text>
+      </Pressable>
+
+      <Pressable style={styles.checkRow} onPress={() => selectCitizenship('non_citizen_of_US')}>
+        <MaterialIcons name={citizenship === 'non_citizen_of_US' ? 'radio-button-checked' : 'radio-button-unchecked'} size={21} color={FORM_PRIMARY} />
+        <Text style={styles.choiceText}>A noncitizen national of the United States</Text>
+      </Pressable>
+
+      <View style={styles.eligibilityOptionBlock}>
+        <Pressable style={styles.checkRow} onPress={() => selectCitizenship('permanent_resident')}>
+          <MaterialIcons name={citizenship === 'permanent_resident' ? 'radio-button-checked' : 'radio-button-unchecked'} size={21} color={FORM_PRIMARY} />
+          <Text style={styles.choiceText}>A lawful permanent resident. (Enter USCIS or A-Number.)</Text>
+        </Pressable>
+        {citizenship === 'permanent_resident' ? (
+          <IconTextInput
+            {...fieldColors}
+            icon="badge"
+            placeholder="USCIS or A-Number *"
+            value={uscis}
+            onChangeText={setUscis}
+            autoCapitalize="characters"
+          />
+        ) : null}
+      </View>
+
+      <View style={styles.eligibilityOptionBlock}>
+        <Pressable style={styles.checkRow} onPress={() => selectCitizenship('noncitizen_authorized')}>
+          <MaterialIcons name={citizenship === 'noncitizen_authorized' ? 'radio-button-checked' : 'radio-button-unchecked'} size={21} color={FORM_PRIMARY} />
+          <Text style={styles.choiceText}>A noncitizen authorized to work until (expiry date)</Text>
+        </Pressable>
+        {citizenship === 'noncitizen_authorized' ? (
+          <IconDateField
+            {...fieldColors}
+            placeholder="Expiry Date *"
+            value={workAuthorizationExpiry}
+            onChange={setWorkAuthorizationExpiry}
+            minimumDate={new Date()}
+          />
+        ) : null}
+      </View>
+
+      <Text style={[styles.helpText, { marginTop: 8 }]}>
+        Acceptable documents — choose one option:
+      </Text>
+      <Pressable style={styles.checkRow} onPress={() => selectEevDocPath('IA')}>
+        <MaterialIcons name={eevDocPath === 'IA' ? 'radio-button-checked' : 'radio-button-unchecked'} size={21} color={FORM_PRIMARY} />
+        <Text style={styles.choiceText}>
+          One document that establishes both identity and employment eligibility
         </Text>
+      </Pressable>
+      <Pressable style={styles.checkRow} onPress={() => selectEevDocPath('BC')}>
+        <MaterialIcons name={eevDocPath === 'BC' ? 'radio-button-checked' : 'radio-button-unchecked'} size={21} color={FORM_PRIMARY} />
+        <Text style={styles.choiceText}>
+          One identity document and one employment authorization document
+        </Text>
+      </Pressable>
 
-        <Pressable style={styles.checkRow} onPress={() => selectCitizenship('citizen_of_US')}>
-          <MaterialIcons name={citizenship === 'citizen_of_US' ? 'radio-button-checked' : 'radio-button-unchecked'} size={21} color={FORM_PRIMARY} />
-          <Text style={styles.choiceText}>A citizen of the United States</Text>
-        </Pressable>
-
-        <Pressable style={styles.checkRow} onPress={() => selectCitizenship('non_citizen_of_US')}>
-          <MaterialIcons name={citizenship === 'non_citizen_of_US' ? 'radio-button-checked' : 'radio-button-unchecked'} size={21} color={FORM_PRIMARY} />
-          <Text style={styles.choiceText}>A noncitizen national of the United States</Text>
-        </Pressable>
-
-        <View style={styles.eligibilityOptionBlock}>
-          <Pressable style={styles.checkRow} onPress={() => selectCitizenship('permanent_resident')}>
-            <MaterialIcons name={citizenship === 'permanent_resident' ? 'radio-button-checked' : 'radio-button-unchecked'} size={21} color={FORM_PRIMARY} />
-            <Text style={styles.choiceText}>A lawful permanent resident. (Enter USCIS or A-Number.)</Text>
-          </Pressable>
-          {citizenship === 'permanent_resident' ? (
-            <IconTextInput
-              {...fieldColors}
-              icon="badge"
-              placeholder="USCIS or A-Number *"
-              value={uscis}
-              onChangeText={setUscis}
-              autoCapitalize="characters"
-            />
-          ) : null}
-        </View>
-
-        <View style={styles.eligibilityOptionBlock}>
-          <Pressable style={styles.checkRow} onPress={() => selectCitizenship('noncitizen_authorized')}>
-            <MaterialIcons name={citizenship === 'noncitizen_authorized' ? 'radio-button-checked' : 'radio-button-unchecked'} size={21} color={FORM_PRIMARY} />
-            <Text style={styles.choiceText}>A noncitizen authorized to work until (expiry date)</Text>
-          </Pressable>
-          {citizenship === 'noncitizen_authorized' ? (
-            <>
-              <IconTextInput
-                {...fieldColors}
-                icon="credit-card"
-                placeholder="Passport Number *"
-                value={passportNumber}
-                onChangeText={setPassportNumber}
-                autoCapitalize="characters"
-              />
-              <IconDateField
-                {...fieldColors}
-                placeholder="Expiry Date *"
-                value={workAuthorizationExpiry}
-                onChange={setWorkAuthorizationExpiry}
-                minimumDate={new Date()}
-              />
-            </>
-          ) : null}
-        </View>
-
-        <SelectField
-          label="Document Category"
-          icon="description"
-          value={selectedGroup ? { id: ATTACHMENT_GROUPS.findIndex(({ id }) => id === selectedGroup.id) + 1, name: selectedGroup.name } : null}
-          onPress={() => setEevGroupModal(true)}
-        />
-        {eevGroup ? (
+      {eevDocPath === 'IA' ? (
+        <>
           <SelectField
-            label="Document Type"
+            label="Document (both identity & employment)"
             icon="description"
             value={eevCategory}
             onPress={() => setEevCategoryModal(true)}
           />
-        ) : null}
-        {eevCategory ? (
-          <>
+          {eevCategory ? (
+            <Pressable style={styles.uploadRow} onPress={async () => {
+              try {
+                const file = await pickDocument('image');
+                if (file) setEevFile(file);
+              } catch (pickError) {
+                setError(pickError instanceof Error ? pickError.message : 'Unable to select the document.');
+              }
+            }}>
+              <MaterialIcons name={eevFile ? 'insert-drive-file' : 'file-upload'} size={21} color={FORM_PRIMARY} />
+              <Text style={styles.uploadText}>{eevFile?.name || 'Upload document *'}</Text>
+            </Pressable>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <SelectField
+            label="Identity document"
+            icon="description"
+            value={eevCategory}
+            onPress={() => setEevCategoryModal(true)}
+          />
+          {eevCategory ? (
             <Pressable style={styles.uploadRow} onPress={async () => {
               try {
                 const file = await pickDocument('image');
@@ -1544,42 +2169,33 @@ export default function OnboardingScreen() {
               }
             }}>
               <MaterialIcons name={eevFile ? 'insert-drive-file' : 'file-upload'} size={21} color={FORM_PRIMARY} />
-              <Text style={styles.uploadText}>{eevFile?.name || 'Upload document *'}</Text>
+              <Text style={styles.uploadText}>{eevFile?.name || 'Upload identity document *'}</Text>
             </Pressable>
-            {eevFile ? (
-              <IconDateField
-                {...fieldColors}
-                placeholder="Document Expiry Date (optional)"
-                value={eevDocumentExpiry}
-                onChange={setEevDocumentExpiry}
-              />
-            ) : null}
-          </>
-        ) : null}
-        {eevGroup && eevGroup !== 'IA' ? (
-          <>
-            <SelectField
-              label={`${secondaryGroupLabel} Type`}
-              icon="description"
-              value={eevSecondCategory}
-              onPress={() => setEevSecondCategoryModal(true)}
-            />
+          ) : null}
+
+          <SelectField
+            label="Employment authorization document"
+            icon="description"
+            value={eevSecondCategory}
+            onPress={() => setEevSecondCategoryModal(true)}
+          />
+          {eevSecondCategory ? (
             <Pressable style={styles.uploadRow} onPress={async () => {
               try {
                 const file = await pickDocument('image');
                 if (file) setEevSecondFile(file);
               } catch (pickError) {
-                setError(pickError instanceof Error ? pickError.message : 'Unable to select second document.');
+                setError(pickError instanceof Error ? pickError.message : 'Unable to select employment authorization document.');
               }
             }}>
               <MaterialIcons name={eevSecondFile ? 'insert-drive-file' : 'file-upload'} size={21} color={FORM_PRIMARY} />
-              <Text style={styles.uploadText}>{eevSecondFile?.name || 'Upload second document *'}</Text>
+              <Text style={styles.uploadText}>{eevSecondFile?.name || 'Upload employment authorization document *'}</Text>
             </Pressable>
-          </>
-        ) : null}
-      </View>
-    );
-  };
+          ) : null}
+        </>
+      )}
+    </View>
+  );
 
   const renderEmergencyContact = () => (
     <View style={styles.form}>
@@ -1602,21 +2218,81 @@ export default function OnboardingScreen() {
   const renderReferences = () => (
     <View style={styles.form}>
       <SectionHeading title="Applicant Reference Check" icon="fact-check" />
-      <IconTextInput {...fieldColors} icon="business" placeholder="Previous Employer *" value={referenceEmployer} onChangeText={setReferenceEmployer} />
-      <IconTextInput {...fieldColors} icon="work" placeholder="Job Title *" value={referenceJobTitle} onChangeText={setReferenceJobTitle} />
-      <IconTextInput {...fieldColors} icon="email" placeholder="Email Address (optional)" value={referenceEmail} onChangeText={setReferenceEmail} keyboardType="email-address" autoCapitalize="none" />
-      <IconTextInput
-        {...fieldColors}
-        icon="phone"
-        placeholder="Phone Number *"
-        value={formatPhoneNumber(referencePhone)}
-        onChangeText={(value) => setReferencePhone(normalizePhoneInput(value))}
-        keyboardType="phone-pad"
-        maxLength={US_PHONE_INPUT_MAX_LENGTH}
-      />
-      <IconTextInput {...fieldColors} icon="badge" placeholder="Position *" value={referencePosition} onChangeText={setReferencePosition} />
-      <IconTextInput {...fieldColors} icon="contact-mail" placeholder="Contact Person *" value={referenceContact} onChangeText={setReferenceContact} />
-      <IconTextInput {...fieldColors} icon="person" placeholder="Your Name *" value={referenceName} onChangeText={setReferenceName} />
+      <Text style={styles.helpText}>
+        Add up to {MAX_REFERENCES} references. The statement and signature are completed once below.
+      </Text>
+      {referenceEntries.map((entry, index) => (
+        <View key={`reference-${index}`} style={styles.licenseCard}>
+          <View style={styles.licenseCardHeader}>
+            <Text style={styles.licenseCardTitle}>Reference {index + 1}</Text>
+            {referenceEntries.length > 1 ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setReferenceEntries((current) => current.filter((_, itemIndex) => itemIndex !== index));
+                }}>
+                <MaterialIcons name="delete-outline" size={20} color="#b42318" />
+              </Pressable>
+            ) : null}
+          </View>
+          <IconTextInput
+            {...fieldColors}
+            icon="business"
+            placeholder="Previous Employer *"
+            value={entry.employer}
+            onChangeText={(value) => updateReferenceEntry(index, { employer: value })}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="work"
+            placeholder="Job Title *"
+            value={entry.jobTitle}
+            onChangeText={(value) => updateReferenceEntry(index, { jobTitle: value })}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="email"
+            placeholder="Email Address (optional)"
+            value={entry.email}
+            onChangeText={(value) => updateReferenceEntry(index, { email: value })}
+            keyboardType="email-address"
+            autoCapitalize="none"
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="phone"
+            placeholder="Phone Number *"
+            value={formatPhoneNumber(entry.phone)}
+            onChangeText={(value) => updateReferenceEntry(index, { phone: normalizePhoneInput(value) })}
+            keyboardType="phone-pad"
+            maxLength={US_PHONE_INPUT_MAX_LENGTH}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="badge"
+            placeholder="Position *"
+            value={entry.position}
+            onChangeText={(value) => updateReferenceEntry(index, { position: value })}
+          />
+          <IconTextInput
+            {...fieldColors}
+            icon="contact-mail"
+            placeholder="Contact Person *"
+            value={entry.contact}
+            onChangeText={(value) => updateReferenceEntry(index, { contact: value })}
+          />
+        </View>
+      ))}
+      {referenceEntries.length < MAX_REFERENCES ? (
+        <Pressable
+          accessibilityRole="button"
+          style={styles.addOtherDoc}
+          onPress={() => setReferenceEntries((current) => [...current, emptyReference()])}>
+          <MaterialIcons name="add-circle-outline" size={20} color={FORM_PRIMARY} />
+          <Text style={styles.addOtherDocText}>Add another reference</Text>
+        </Pressable>
+      ) : null}
+
       <SectionHeading title="Statement of Accuracy and Release" icon="verified-user" />
       <Text style={styles.helpText}>
         I certify that any omission or misleading or untrue statement or answer in this application may jeopardize my
@@ -1627,7 +2303,16 @@ export default function OnboardingScreen() {
         that I can perform all essential job functions without reasonable accommodation. IsentCare will perform
         criminal background checks on all applicants.
       </Text>
-      <Text style={styles.helpText}>Date: {new Date().toISOString().slice(0, 10)}</Text>
+      <IconTextInput
+        {...fieldColors}
+        icon="person"
+        placeholder="Your Name *"
+        value={referenceName}
+        onChangeText={setReferenceName}
+      />
+      <Text style={styles.helpText}>
+        Date: {new Date().toISOString().slice(0, 10)}
+      </Text>
       <SignaturePad
         strokes={referenceSignatureStrokes}
         onStrokesChange={(strokes) => {
@@ -1875,46 +2560,40 @@ export default function OnboardingScreen() {
         title="Select Country"
         options={countries}
         onClose={() => setEduCountryModal(false)}
-        onSelect={(option) => { setEduCountry(option); setEduCountryModal(false); }}
-      />
-      <OptionModal
-        visible={eevGroupModal}
-        title="Select Employment Eligibility Document Category"
-        options={ATTACHMENT_GROUPS.map(({ name }, index) => ({ id: index + 1, name }))}
-        onClose={() => setEevGroupModal(false)}
         onSelect={(option) => {
-          const group = ATTACHMENT_GROUPS[option.id - 1]?.id;
-          if (group) {
-            setEevGroup(group);
-            setEevCategory(null);
-            setEevSecondCategory(null);
-            setEevFile(null);
-            setEevSecondFile(null);
-          }
-          setEevGroupModal(false);
+          updateEducationEntry(activeEducationIndex, { country: option });
+          setEduCountryModal(false);
         }}
       />
       <OptionModal
         visible={eevCategoryModal}
-        title="Select Document Type"
-        options={attachmentCategories.filter((category) => category.category === eevGroup)}
+        title={eevDocPath === 'IA' ? 'Select document' : 'Select identity document'}
+        options={attachmentCategories.filter((category) => (
+          category.category === (eevDocPath === 'IA' ? 'IA' : 'ID')
+        ))}
+        selectedIds={eevCategory ? [eevCategory.id] : []}
         onClose={() => setEevCategoryModal(false)}
         onSelect={(option) => {
-          setEevCategory(attachmentCategories.find((item) => item.id === option.id) ?? null);
-          setEevSecondCategory(null);
-          setEevFile(null);
-          setEevSecondFile(null);
+          setEevCategory({
+            id: Number(option.id),
+            name: option.name,
+            category: eevDocPath === 'IA' ? 'IA' : 'ID',
+          });
           setEevCategoryModal(false);
         }}
       />
       <OptionModal
         visible={eevSecondCategoryModal}
-        title={`Select ${eevGroup === 'AU' ? 'Identity Document' : 'Employment Authorization'} Type`}
-        options={attachmentCategories.filter((category) => category.category === (eevGroup === 'AU' ? 'ID' : 'AU'))}
+        title="Select employment authorization document"
+        options={attachmentCategories.filter((category) => category.category === 'AU')}
+        selectedIds={eevSecondCategory ? [eevSecondCategory.id] : []}
         onClose={() => setEevSecondCategoryModal(false)}
         onSelect={(option) => {
-          setEevSecondCategory(attachmentCategories.find((item) => item.id === option.id) ?? null);
-          setEevSecondFile(null);
+          setEevSecondCategory({
+            id: Number(option.id),
+            name: option.name,
+            category: 'AU',
+          });
           setEevSecondCategoryModal(false);
         }}
       />

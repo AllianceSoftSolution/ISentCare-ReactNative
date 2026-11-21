@@ -1,5 +1,5 @@
-import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useMemo, useRef, useState, type ElementRef } from 'react';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState, type ElementRef } from 'react';
 import {
   ActivityIndicator,
   PanResponder,
@@ -13,14 +13,17 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { applyForWork, fetchWorkPage, formatMoney, formatShiftTiming, formatWorkDate, getShiftPayRate, type WorkItem } from '@/api/work';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
-import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
+import { FORM_PRIMARY, IconDateField } from '@/components/ui/RegistrationFields';
 import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton';
 import { SuccessTickModal } from '@/components/ui/SuccessTickModal';
 import {
+  getCompletedFilterCache,
   getWorkListCache,
   invalidateWorkListCache,
   removeWorkItemFromCache,
+  setCompletedFilterCache,
   setWorkListCache,
+  type CompletedPeriod,
 } from '@/store/workListCache';
 import {
   isMutationConflictError,
@@ -29,6 +32,12 @@ import {
 } from '@/utils/mutationConflict';
 
 type ShiftTab = 'available' | 'completed';
+
+function parseShiftTab(value: string | string[] | undefined): ShiftTab | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (raw === 'available' || raw === 'completed') return raw;
+  return null;
+}
 
 function ShiftSkeletonCard() {
   return (
@@ -99,8 +108,12 @@ function DistanceSlider({ value, onChange }: { value: number; onChange: (value: 
 
 export default function ShiftsScreen() {
   const router = useRouter();
-  const [tab, setTab] = useState<ShiftTab>('available');
+  const params = useLocalSearchParams<{ tab?: string | string[] }>();
+  const requestedTab = parseShiftTab(params.tab);
+  const [tab, setTab] = useState<ShiftTab>(requestedTab ?? 'available');
   const [distance, setDistance] = useState(0);
+  const [completedPeriod, setCompletedPeriod] = useState<CompletedPeriod>('all');
+  const [completedDate, setCompletedDate] = useState('');
   const [available, setAvailable] = useState<WorkItem[]>([]);
   const [completed, setCompleted] = useState<WorkItem[]>([]);
   const [availableLoading, setAvailableLoading] = useState(true);
@@ -123,6 +136,33 @@ export default function ShiftsScreen() {
   const availableMoreBusy = useRef(false);
   const completedMoreBusy = useRef(false);
   const applyBusy = useRef(false);
+  const pagerRef = useRef<ElementRef<typeof ScrollView>>(null);
+  const [pageWidth, setPageWidth] = useState(0);
+  const ignorePagerSync = useRef(false);
+
+  const goToTab = useCallback((next: ShiftTab, animated = true) => {
+    setTab(next);
+    if (pageWidth <= 0) return;
+    ignorePagerSync.current = true;
+    pagerRef.current?.scrollTo({
+      x: (next === 'available' ? 0 : 1) * pageWidth,
+      animated,
+    });
+    // Avoid onMomentumScrollEnd flipping the tab back after a programmatic jump.
+    requestAnimationFrame(() => {
+      ignorePagerSync.current = false;
+    });
+  }, [pageWidth]);
+
+  useEffect(() => {
+    if (requestedTab) goToTab(requestedTab, false);
+  }, [requestedTab, goToTab]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (requestedTab) goToTab(requestedTab, false);
+    }, [requestedTab, goToTab]),
+  );
 
   const loadAvailable = useCallback((options?: { force?: boolean; clear?: boolean }) => {
     if (availableTimer.current) clearTimeout(availableTimer.current);
@@ -181,35 +221,51 @@ export default function ShiftsScreen() {
 
   const loadCompleted = useCallback((options?: { force?: boolean }) => {
     const requestId = ++completedRequest.current;
-    const cached = getWorkListCache('completed');
-    if (cached && !options?.force) {
+    const filterDate = completedPeriod === 'date' ? completedDate : null;
+
+    if (completedPeriod === 'date' && !completedDate) {
+      setCompleted([]);
+      setCompletedHasMore(false);
+      completedPage.current = 1;
+      setCompletedLoading(false);
+      setCompletedError(null);
+      setCompletedMoreLoading(false);
+      return;
+    }
+
+    // SWR: paint this filter's cache immediately, then revalidate in the background.
+    const cached = getCompletedFilterCache(completedPeriod, filterDate);
+    if (cached) {
       setCompleted(cached.data.results);
       setCompletedHasMore(cached.data.hasMore);
       completedPage.current = cached.data.page;
       setCompletedLoading(false);
     } else {
+      setCompleted([]);
+      setCompletedHasMore(false);
+      completedPage.current = 1;
       setCompletedLoading(true);
-      if (!cached) {
-        setCompleted([]);
-        setCompletedHasMore(false);
-        completedPage.current = 1;
-      }
     }
+
     setCompletedError(null);
     setCompletedMoreLoading(false);
-    void fetchWorkPage<WorkItem>('/shifts/completed_shifts/', 1)
+    void fetchWorkPage<WorkItem>('/shifts/completed_shifts/', 1, {
+      period: completedPeriod,
+      date: filterDate || undefined,
+    })
       .then((page) => {
         if (requestId !== completedRequest.current) return;
         setCompleted(page.results);
         setCompletedHasMore(page.hasMore);
         completedPage.current = 1;
-        setWorkListCache('completed', {
+        setCompletedFilterCache(completedPeriod, filterDate, {
           results: page.results,
           hasMore: page.hasMore,
           page: 1,
         });
       })
       .catch((loadError: unknown) => {
+        // Keep showing stale data when revalidation fails; only error if we had nothing.
         if (requestId === completedRequest.current && !cached) {
           setCompletedError(loadError instanceof Error ? loadError.message : 'Unable to load completed shifts.');
         }
@@ -217,7 +273,7 @@ export default function ShiftsScreen() {
       .finally(() => {
         if (requestId === completedRequest.current) setCompletedLoading(false);
       });
-  }, []);
+  }, [completedPeriod, completedDate]);
 
   useFocusEffect(useCallback(() => {
     loadCompleted();
@@ -242,7 +298,12 @@ export default function ShiftsScreen() {
       const page = await fetchWorkPage<WorkItem>(
         isAvailable ? '/per_diem_jobs/' : '/shifts/completed_shifts/',
         nextPage,
-        isAvailable ? distance : undefined,
+        isAvailable
+          ? { range: distance }
+          : {
+              period: completedPeriod,
+              date: completedPeriod === 'date' ? completedDate : undefined,
+            },
       );
       if (requestId !== (isAvailable ? availableRequest.current : completedRequest.current)) return;
       if (isAvailable) {
@@ -259,9 +320,10 @@ export default function ShiftsScreen() {
         availablePage.current = nextPage;
         setAvailableHasMore(page.hasMore);
       } else {
+        const filterDate = completedPeriod === 'date' ? completedDate : null;
         setCompleted((current) => {
           const merged = [...current, ...page.results];
-          setWorkListCache('completed', {
+          setCompletedFilterCache(completedPeriod, filterDate, {
             results: merged,
             hasMore: page.hasMore,
             page: nextPage,
@@ -338,16 +400,62 @@ export default function ShiftsScreen() {
       });
   };
 
-  const pagerRef = useRef<ElementRef<typeof ScrollView>>(null);
-  const [pageWidth, setPageWidth] = useState(0);
+  const renderCompletedFilters = () => (
+    <View style={styles.filterPanel}>
+      <View style={styles.filterChips}>
+        {([
+          ['all', 'All'],
+          ['month', 'This month'],
+          ['date', 'Date'],
+        ] as const).map(([id, label]) => (
+          <Pressable
+            key={id}
+            accessibilityRole="button"
+            accessibilityState={{ selected: completedPeriod === id }}
+            onPress={() => setCompletedPeriod(id)}
+            style={[styles.filterChip, completedPeriod === id && styles.filterChipActive]}>
+            <Text style={[styles.filterChipText, completedPeriod === id && styles.filterChipTextActive]}>
+              {label}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {completedPeriod === 'date' ? (
+        <IconDateField
+          placeholder="Select a date"
+          value={completedDate}
+          onChange={setCompletedDate}
+          backgroundColor="#fff"
+          textColor="#263341"
+          maximumDate={new Date()}
+        />
+      ) : null}
+    </View>
+  );
 
-  const goToTab = (next: ShiftTab, animated = true) => {
-    setTab(next);
-    if (pageWidth <= 0) return;
-    pagerRef.current?.scrollTo({
-      x: (next === 'available' ? 0 : 1) * pageWidth,
-      animated,
-    });
+  const completedEmptyCopy = () => {
+    if (completedPeriod === 'month') {
+      return {
+        title: 'No completed shifts this month',
+        detail: 'Finished shifts from this calendar month will show up here.',
+      };
+    }
+    if (completedPeriod === 'date') {
+      if (!completedDate) {
+        return {
+          title: 'Choose a date',
+          detail: 'Pick a date above to see completed shifts for that day.',
+        };
+      }
+      return {
+        title: 'No completed shifts on this date',
+        detail: `Nothing finished on ${formatWorkDate(completedDate)}.`,
+      };
+    }
+    return {
+      title: 'No completed shifts yet',
+      detail: 'Completed shifts will appear here.',
+    };
   };
 
   const renderTabBody = (type: ShiftTab) => {
@@ -356,10 +464,12 @@ export default function ShiftsScreen() {
     const error = type === 'available' ? availableError : completedError;
     const hasMore = type === 'available' ? availableHasMore : completedHasMore;
     const moreLoading = type === 'available' ? availableMoreLoading : completedMoreLoading;
+    const emptyCopy = type === 'completed' ? completedEmptyCopy() : null;
 
     return (
       <View style={[styles.page, pageWidth > 0 && { width: pageWidth }]}>
         {type === 'available' ? <DistanceSlider value={distance} onChange={setDistance} /> : null}
+        {type === 'completed' ? renderCompletedFilters() : null}
         {error && shifts.length === 0 ? (
           <View style={styles.statusPanel}>
             <MaterialIcons name="wifi-off" size={26} color="#b42318" />
@@ -383,12 +493,12 @@ export default function ShiftsScreen() {
           <View style={styles.statusPanel}>
             <MaterialIcons name="event-busy" size={34} color="#98a2b3" />
             <Text style={styles.emptyTitle}>
-              {type === 'available' ? 'No shifts available nearby' : 'No completed shifts yet'}
+              {type === 'available' ? 'No shifts available nearby' : emptyCopy?.title}
             </Text>
             <Text style={styles.mutedText}>
               {type === 'available'
                 ? 'Try increasing your distance to see more opportunities.'
-                : 'Completed shifts will appear here.'}
+                : emptyCopy?.detail}
             </Text>
           </View>
         ) : (
@@ -512,7 +622,7 @@ export default function ShiftsScreen() {
             keyboardShouldPersistTaps="handled"
             style={styles.pager}
             onMomentumScrollEnd={(event) => {
-              if (pageWidth <= 0) return;
+              if (ignorePagerSync.current || pageWidth <= 0) return;
               const index = Math.round(event.nativeEvent.contentOffset.x / pageWidth);
               setTab(index === 0 ? 'available' : 'completed');
             }}>
@@ -583,6 +693,21 @@ const styles = StyleSheet.create({
   sliderThumb: { position: 'absolute', width: 20, height: 20, marginLeft: -10, borderRadius: 10, borderWidth: 3, borderColor: FORM_PRIMARY, backgroundColor: '#fff', elevation: 2 },
   sliderLabels: { flexDirection: 'row', justifyContent: 'space-between' },
   sliderLabel: { color: '#667085', fontSize: 12 },
+  filterPanel: { paddingTop: 14, paddingBottom: 8, gap: 10 },
+  filterChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  filterChip: {
+    minHeight: 34,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#d0d5dd',
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterChipActive: { borderColor: FORM_PRIMARY, backgroundColor: '#eaf3fb' },
+  filterChipText: { color: '#475467', fontSize: 13, fontWeight: '600' },
+  filterChipTextActive: { color: FORM_PRIMARY },
   list: { paddingTop: 4, paddingBottom: 24, gap: 12 },
   card: { padding: 16, gap: 14, borderRadius: 14, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e7edf3', elevation: 1 },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },

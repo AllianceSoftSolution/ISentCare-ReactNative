@@ -2,7 +2,12 @@ import type { TodayShift } from '@/api/shifts';
 import type { CalendarShift } from '@/api/calendar';
 import type { WorkItem } from '@/api/work';
 
-/** Soft age hint for opportunistic UX; screens still revalidate on focus. */
+/**
+ * Stale-while-revalidate (SWR) for work lists:
+ * 1. Show last cached payload immediately (no full-screen flash on revisit).
+ * 2. Refetch in the background on tab focus / filter change / after mutations.
+ * 3. Mutations always hit the live API; then invalidate related caches.
+ */
 export const WORK_LIST_TTL_MS = 45_000;
 
 export type WorkListKey =
@@ -13,9 +18,18 @@ export type WorkListKey =
   | 'calendar'
   | 'shift_counts';
 
+export type CompletedPeriod = 'all' | 'month' | 'date';
+
+export type CompletedListPayload = {
+  results: WorkItem[];
+  hasMore: boolean;
+  page: number;
+};
+
 type WorkListPayloadMap = {
   per_diem: { results: WorkItem[]; hasMore: boolean; range: number; page: number };
-  completed: { results: WorkItem[]; hasMore: boolean; page: number };
+  /** Legacy single-slot; prefer get/setCompletedFilterCache for All / month / date. */
+  completed: CompletedListPayload & { period: CompletedPeriod; date: string | null };
   permanent: { results: WorkItem[]; hasMore: boolean; page: number };
   today: TodayShift[];
   calendar: { year: number; month: number; events: CalendarShift[] };
@@ -30,6 +44,43 @@ type CacheEntry<T> = {
 const cache: {
   [K in WorkListKey]?: CacheEntry<WorkListPayloadMap[K]>;
 } = {};
+
+/** One SWR bucket per completed filter so switching All ↔ month ↔ date restores instantly. */
+const completedFilterCache: Record<string, CacheEntry<CompletedListPayload>> = {};
+
+export function completedFilterCacheKey(
+  period: CompletedPeriod,
+  date: string | null = null,
+): string {
+  if (period === 'date') return `date:${date || ''}`;
+  return period;
+}
+
+export function getCompletedFilterCache(
+  period: CompletedPeriod,
+  date: string | null = null,
+): CacheEntry<CompletedListPayload> | null {
+  if (period === 'date' && !date) return null;
+  return completedFilterCache[completedFilterCacheKey(period, date)] ?? null;
+}
+
+export function setCompletedFilterCache(
+  period: CompletedPeriod,
+  date: string | null,
+  data: CompletedListPayload,
+) {
+  if (period === 'date' && !date) return;
+  completedFilterCache[completedFilterCacheKey(period, date)] = {
+    data,
+    updatedAt: Date.now(),
+  };
+  // Keep legacy slot in sync for callers that still read `completed`.
+  setWorkListCache('completed', {
+    ...data,
+    period,
+    date: period === 'date' ? date : null,
+  });
+}
 
 export function getWorkListCache<K extends WorkListKey>(
   key: K,
@@ -81,11 +132,21 @@ export function removeWorkItemFromCache(key: 'per_diem' | 'permanent' | 'today',
 }
 
 export function invalidateWorkListCache(key?: WorkListKey) {
+  if (key === 'completed') {
+    delete cache.completed;
+    Object.keys(completedFilterCache).forEach((item) => {
+      delete completedFilterCache[item];
+    });
+    return;
+  }
   if (key) {
     delete cache[key];
     return;
   }
   (Object.keys(cache) as WorkListKey[]).forEach((item) => {
     delete cache[item];
+  });
+  Object.keys(completedFilterCache).forEach((item) => {
+    delete completedFilterCache[item];
   });
 }

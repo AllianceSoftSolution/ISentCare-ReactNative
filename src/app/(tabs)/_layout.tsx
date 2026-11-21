@@ -22,15 +22,21 @@ export default function TabsLayout() {
         if (status === 'verified') {
           setReady(true);
         } else if (status === 'signedOut') {
-          router.replace('/(auth)/get-started');
+          router.replace('/(auth)/sign-in');
         } else {
           router.replace('/(auth)/onboarding');
         }
       })
       .catch((sessionError: unknown) => {
-        if (active) {
-          setError(sessionError instanceof Error ? sessionError.message : 'Unable to check your account.');
+        if (!active) return;
+        const message =
+          sessionError instanceof Error ? sessionError.message : 'Unable to check your account.';
+        // Never paint raw HTML / login pages into the guard UI.
+        if (/<\s*(!doctype|html|head|body)\b/i.test(message)) {
+          router.replace('/(auth)/sign-in');
+          return;
         }
+        setError(message);
       });
 
     return () => {

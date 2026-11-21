@@ -2,13 +2,20 @@
   "expo": {
     "name": "IsentCare",
     "slug": "isentcare_android",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "isentcareandroid",
     "userInterfaceStyle": "light",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "bundleIdentifier": "com.elevatecoders.isentcare",
+      "buildNumber": "2",
+      "supportsTablet": false,
+      "icon": "./assets/expo.icon",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Allow IsentCare to use your current location for registration and to verify your location when you start a shift.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {

@@ -294,10 +294,64 @@ export async function fetchResume(): Promise<ResumeRecord> {
   return response.data ?? { resume: null, has_resume: false };
 }
 
+export type ExtraAttachmentGroup = 'IA' | 'ID' | 'AU';
+
+export type ExtraAttachmentCategoryOption = CatalogOption & {
+  category: ExtraAttachmentGroup;
+};
+
 export async function fetchExtraAttachments(): Promise<ExtraAttachmentRecord[]> {
   const response = await professionalApiClient.get<unknown>('/extra_attachments/');
   if (!response.ok) throw new Error(responseError(response, 'Unable to load eligibility documents.'));
   return extractList<ExtraAttachmentRecord>(response.data);
+}
+
+export async function fetchExtraAttachmentCategories(): Promise<ExtraAttachmentCategoryOption[]> {
+  const groups: ExtraAttachmentGroup[] = ['IA', 'ID', 'AU'];
+  const responses = await Promise.all(
+    groups.map((group) =>
+      professionalApiClient.get<CatalogOption[]>(`/attachments/attachment_category/?category=${group}`),
+    ),
+  );
+  const categories: ExtraAttachmentCategoryOption[] = [];
+  responses.forEach((response, index) => {
+    if (!response.ok) {
+      throw new Error(responseError(response, `Unable to load ${groups[index]} document types.`));
+    }
+    if (!Array.isArray(response.data)) {
+      throw new Error('The server returned invalid employment document types.');
+    }
+    categories.push(
+      ...response.data.map((option) => ({
+        id: Number(option.id),
+        name: String(option.name ?? ''),
+        category: groups[index],
+      })),
+    );
+  });
+  return categories;
+}
+
+/** Replace the professional's EEV document package (identity+employment, or identity + authorization). */
+export async function uploadExtraAttachments(payload: {
+  category1Id: number;
+  file1: SelectedUpload;
+  expiryDate1?: string | null;
+  category2Id?: number | null;
+  file2?: SelectedUpload | null;
+  expiryDate2?: string | null;
+}): Promise<void> {
+  const formData = new FormData();
+  formData.append('category_1', String(payload.category1Id));
+  await appendUploadAsync(formData, 'file_1', payload.file1);
+  if (payload.expiryDate1) formData.append('expiry_date_1', payload.expiryDate1);
+  if (payload.category2Id != null && payload.file2) {
+    formData.append('category_2', String(payload.category2Id));
+    await appendUploadAsync(formData, 'file_2', payload.file2);
+    if (payload.expiryDate2) formData.append('expiry_date_2', payload.expiryDate2);
+  }
+  const response = await professionalApiClient.post('/extra_attachments/', formData, multipartRequestConfig);
+  if (!response.ok) throw new Error(responseError(response, 'Unable to update eligibility documents.'));
 }
 
 export async function uploadCredential(payload: {

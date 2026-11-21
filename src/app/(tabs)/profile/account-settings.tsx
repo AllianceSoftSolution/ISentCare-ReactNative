@@ -18,6 +18,7 @@ import {
   type NotificationPreferences,
   type UserAddress,
 } from '@/api/settings';
+import { networkReachabilityMessage } from '@/api/work';
 import {
   EditableProfileRecords,
   type EditableSection,
@@ -229,7 +230,7 @@ export default function AccountSettingsScreen() {
           response.problem === 'NETWORK_ERROR'
             || response.problem === 'TIMEOUT_ERROR'
             || response.problem === 'CONNECTION_ERROR'
-            ? 'No internet connection. Check your connection and try again.'
+            ? 'Unable to reach the server. Make sure the API is running and try again.'
             : 'Unable to load states. Please try again.',
         );
       }

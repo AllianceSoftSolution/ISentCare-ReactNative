@@ -1,5 +1,6 @@
 import { create } from 'apisauce';
 import useAuthStore from '../store/authStore';
+import { isAuthFailureStatus, looksLikeHtml } from '@/utils/apiErrors';
 
 const configuredBaseURL = (
   typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_API_BASE_URL : undefined
@@ -16,17 +17,44 @@ if (!configuredBaseURL) {
 const apiOrigin = configuredBaseURL.replace(/\/api$/, '');
 const baseURL = `${apiOrigin}/api`;
 
+// Mobile networks are often slower than desktop; avoid premature TIMEOUT_ERROR.
+const API_TIMEOUT_MS = 45_000;
+
 // Keep cookie credentials off so Django SessionAuthentication cannot
 // enforce CSRF on JWT/API requests from the mobile/web clients.
-const apiClient = create({ baseURL, withCredentials: false });
+const apiClient = create({ baseURL, withCredentials: false, timeout: API_TIMEOUT_MS });
 const professionalApiClient = create({
   baseURL: `${apiOrigin}/professional/api`,
   withCredentials: false,
+  timeout: API_TIMEOUT_MS,
 });
+
+let signingOutForAuth = false;
+
+async function forceSignOutToLogin() {
+  if (signingOutForAuth) return;
+  signingOutForAuth = true;
+  try {
+    // Dynamic import avoids a circular dependency with session.ts.
+    const { clearSession } = await import('./session');
+    await clearSession();
+    try {
+      // Dynamic import keeps expo-router out of the API module graph at boot.
+      const { router } = await import('expo-router');
+      router.replace('/(auth)/sign-in');
+    } catch {
+      // Navigation may be unavailable during early boot; splash/tabs guards will route.
+    }
+  } finally {
+    signingOutForAuth = false;
+  }
+}
 
 for (const client of [apiClient, professionalApiClient]) {
   client.addRequestTransform((request) => {
     request.headers = request.headers || {};
+    // Prefer JSON so DRF does not return the browsable HTML API on errors.
+    request.headers.Accept = 'application/json';
     const authToken = useAuthStore.getState().token;
     if (authToken) {
       request.headers.authorization = 'Bearer ' + authToken;
@@ -44,12 +72,17 @@ for (const client of [apiClient, professionalApiClient]) {
   });
 
   client.addResponseTransform((response) => {
-    if (response.status === 401) {
-      const { token } = useAuthStore.getState();
-      if (token) {
-        // Dynamic import avoids a circular dependency with session.ts.
-        void import('./session').then(({ clearSession }) => clearSession());
-      }
+    const hadToken = Boolean(useAuthStore.getState().token);
+    const htmlBody = looksLikeHtml(response.data);
+    const authLost =
+      hadToken
+      && (
+        response.status === 401
+        || (response.status === 403 && htmlBody)
+        || (htmlBody && isAuthFailureStatus(response.status))
+      );
+    if (authLost) {
+      void forceSignOutToLogin();
     }
   });
 }
