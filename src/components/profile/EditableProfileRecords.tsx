@@ -66,9 +66,7 @@ import {
 } from '@/utils/phone';
 import { eevPathMismatchMessage } from '@/utils/eevDocuments';
 import { openSecureDocument } from '@/utils/openSecureDocument';
-import { secureFileUrl } from '@/utils/secureFileUrl';
 import type { SelectedUpload } from '@/utils/upload';
-import useAuthStore from '@/store/authStore';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { useFocusEffect } from 'expo-router';
@@ -104,10 +102,6 @@ const fieldColors = {
   backgroundColor: '#f5f8fb',
   textColor: '#263341',
 };
-
-function documentUrl(value: string) {
-  return secureFileUrl(value, useAuthStore.getState().token);
-}
 
 function fileName(value: string) {
   return decodeURIComponent(value.split(/[?#]/, 1)[0].split('/').pop() || 'Open document');
