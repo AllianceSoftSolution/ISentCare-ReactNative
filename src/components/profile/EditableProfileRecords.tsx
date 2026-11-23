@@ -43,6 +43,7 @@ import {
   type ResumeRecord,
 } from '@/api/profileRecords';
 import { OptionPickerModal } from '@/components/profile/OptionPickerModal';
+import { BusyOverlay } from '@/components/ui/BusyOverlay';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import {
   FORM_PRIMARY,
@@ -65,7 +66,7 @@ import {
   US_PHONE_INPUT_MAX_LENGTH,
 } from '@/utils/phone';
 import { eevPathMismatchMessage } from '@/utils/eevDocuments';
-import { openSecureDocument } from '@/utils/openSecureDocument';
+import { openProfessionalDocument } from '@/utils/openSecureDocument';
 import type { SelectedUpload } from '@/utils/upload';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
@@ -103,8 +104,13 @@ const fieldColors = {
   textColor: '#263341',
 };
 
-function fileName(value: string) {
-  return decodeURIComponent(value.split(/[?#]/, 1)[0].split('/').pop() || 'Open document');
+function fileName(value: string, fallback = 'Open document') {
+  // Secure links are /files/secure/?t=… with no real filename in the path.
+  if (/\/files\/secure\/?/i.test(value) || !value.includes('/')) {
+    return fallback;
+  }
+  const leaf = decodeURIComponent(value.split(/[?#]/, 1)[0].split('/').pop() || '');
+  return leaf || fallback;
 }
 
 function durationLabel(value: unknown, fallbackDates: (string | null | undefined)[]) {
@@ -142,6 +148,8 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [openingDocument, setOpeningDocument] = useState(false);
+  const openingDocumentRef = useRef(false);
 
   const [employments, setEmployments] = useState<EmploymentRecord[]>([]);
   const [educations, setEducations] = useState<EducationRecord[]>([]);
@@ -347,16 +355,30 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
     };
   }, [load]));
 
-  const openDocument = async (path: string) => {
+  const openDocument = async (
+    ref:
+      | { kind: 'resume' }
+      | { kind: 'attachment'; id: number }
+      | { kind: 'other'; id: number }
+      | { kind: 'extra'; id: number },
+  ) => {
+    // Synchronous guard — React state alone allows stacked taps before re-render.
+    if (openingDocumentRef.current || saving) return;
+    openingDocumentRef.current = true;
+    setOpeningDocument(true);
+    setBusy(true);
+    setError(null);
     try {
-      setBusy(true);
-      setError(null);
-      await openSecureDocument(path);
+      // Same JWT + /professional/api path as replace/delete — Django streams
+      // from private S3 with IAM (no public bucket, no /files/secure quirks).
+      await openProfessionalDocument(ref);
     } catch (openError) {
       const message = openError instanceof Error ? openError.message : 'Unable to open document.';
       setError(message);
       Alert.alert('Unable to open document', message);
     } finally {
+      openingDocumentRef.current = false;
+      setOpeningDocument(false);
       setBusy(false);
     }
   };
@@ -818,12 +840,18 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
   };
 
   const saveEevDocuments = async () => {
+    // eevPathMismatchMessage covers missing/wrong IA|ID|AU categories, including
+    // BC without an employment authorization (AU) document type.
     const eevMismatch = eevPathMismatchMessage(eevDocPath, eevCategory, eevSecondCategory);
     if (eevMismatch || !eevCategory) {
       Alert.alert(
         'Missing document type',
         eevMismatch || 'Select an employment eligibility document type.',
       );
+      return;
+    }
+    if (eevDocPath === 'BC' && !eevSecondCategory) {
+      Alert.alert('Missing document type', 'Select an employment authorization document type.');
       return;
     }
     if (!eevFile) {
@@ -1021,10 +1049,14 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
             {resume?.has_resume && resume.resume ? (
               <Pressable
                 accessibilityRole="button"
-                style={styles.documentRow}
-                onPress={() => void openDocument(resume.resume!)}>
+                accessibilityLabel="Open resume"
+                style={[styles.documentRow, openingDocument && styles.disabled]}
+                disabled={openingDocument || saving}
+                onPress={() => void openDocument({ kind: 'resume' })}>
                 <MaterialIcons name="description" size={22} color={FORM_PRIMARY} />
-                <Text style={styles.documentLabel} numberOfLines={1}>{fileName(resume.resume)}</Text>
+                <Text style={styles.documentLabel} numberOfLines={1}>
+                  {fileName(resume.resume, 'Resume')}
+                </Text>
                 <MaterialIcons name="open-in-new" size={18} color="#667085" />
               </Pressable>
             ) : (
@@ -1068,10 +1100,14 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
               {typeof record.file === 'string' && record.file ? (
                 <Pressable
                   accessibilityRole="button"
-                  style={styles.documentRow}
-                  onPress={() => void openDocument(record.file!)}>
+                  accessibilityLabel={`Open ${record.type || 'credential'}`}
+                  style={[styles.documentRow, openingDocument && styles.disabled]}
+                  disabled={openingDocument || saving}
+                  onPress={() => void openDocument({ kind: 'attachment', id: record.id })}>
                   <MaterialIcons name="description" size={22} color={FORM_PRIMARY} />
-                  <Text style={styles.documentLabel} numberOfLines={1}>{fileName(record.file)}</Text>
+                  <Text style={styles.documentLabel} numberOfLines={1}>
+                    {fileName(record.file, record.type || 'Credential')}
+                  </Text>
                   <MaterialIcons name="open-in-new" size={18} color="#667085" />
                 </Pressable>
               ) : null}
@@ -1121,10 +1157,14 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
               {typeof record.file === 'string' && record.file ? (
                 <Pressable
                   accessibilityRole="button"
-                  style={styles.documentRow}
-                  onPress={() => void openDocument(record.file!)}>
+                  accessibilityLabel={`Open ${record.title || 'document'}`}
+                  style={[styles.documentRow, openingDocument && styles.disabled]}
+                  disabled={openingDocument || saving}
+                  onPress={() => void openDocument({ kind: 'other', id: record.id })}>
                   <MaterialIcons name="description" size={22} color={FORM_PRIMARY} />
-                  <Text style={styles.documentLabel} numberOfLines={1}>{fileName(record.file)}</Text>
+                  <Text style={styles.documentLabel} numberOfLines={1}>
+                    {fileName(record.file, record.title || 'Other document')}
+                  </Text>
                   <MaterialIcons name="open-in-new" size={18} color="#667085" />
                 </Pressable>
               ) : (
@@ -1159,10 +1199,18 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
                 <Pressable
                   key={record.id}
                   accessibilityRole="button"
-                  style={styles.documentRow}
-                  disabled={typeof record.file !== 'string' || !record.file}
+                  accessibilityLabel="Open eligibility document"
+                  style={[styles.documentRow, openingDocument && styles.disabled]}
+                  disabled={
+                    openingDocument
+                    || saving
+                    || typeof record.file !== 'string'
+                    || !record.file
+                  }
                   onPress={() => {
-                    if (typeof record.file === 'string' && record.file) void openDocument(record.file);
+                    if (typeof record.file === 'string' && record.file) {
+                      void openDocument({ kind: 'extra', id: record.id });
+                    }
                   }}>
                   <MaterialIcons name="badge" size={22} color={FORM_PRIMARY} />
                   <View style={styles.flex}>
@@ -1607,6 +1655,8 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
           setEevSecondCategoryPickerOpen(false);
         }}
       />
+
+      <BusyOverlay visible={openingDocument} message="Opening document…" />
     </View>
   );
 }

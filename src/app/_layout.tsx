@@ -56,7 +56,16 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={appTheme}>
       <StatusBar style="dark" />
-      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#ffffff' } }} />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#ffffff' } }}>
+        <Stack.Screen
+          name="document-viewer"
+          options={{
+            presentation: 'fullScreenModal',
+            animation: 'slide_from_bottom',
+            contentStyle: { backgroundColor: '#0f172a' },
+          }}
+        />
+      </Stack>
     </ThemeProvider>
   );
 }

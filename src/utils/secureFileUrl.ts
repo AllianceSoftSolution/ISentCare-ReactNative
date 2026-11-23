@@ -1,5 +1,5 @@
 import { apiOrigin } from '@/api/apiClient';
-import useAuthStore from '@/store/authStore';
+import { authStore } from '@/store/authStore';
 
 /**
  * Build an absolute file URL and, for /files/secure/ links, attach the JWT
@@ -11,7 +11,7 @@ export function secureFileUrl(path: string | null | undefined, token?: string | 
     ? path
     : `${apiOrigin}${path.startsWith('/') ? '' : '/'}${path}`;
 
-  const authToken = token ?? useAuthStore.getState().token;
+  const authToken = token ?? authStore.getState().token;
   if (!authToken) return absolute;
 
   try {

@@ -18,4 +18,13 @@ describe('eevPathMismatchMessage', () => {
     expect(eevPathMismatchMessage('BC', id, ia)).toMatch(/employment authorization/i);
     expect(eevPathMismatchMessage('BC', id, au)).toBeNull();
   });
+
+  test('rejects incomplete BC path when employment authorization category is missing', () => {
+    expect(eevPathMismatchMessage('BC', id, null)).toBe(
+      'Select an employment authorization document type.',
+    );
+    expect(eevPathMismatchMessage('BC', id, undefined)).toBe(
+      'Select an employment authorization document type.',
+    );
+  });
 });
