@@ -21,6 +21,7 @@ import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
 import { ScreenHeader, ScreenHeaderRefresh } from '@/components/ui/ScreenHeader';
 import useAuthStore from '@/store/authStore';
 import { formatPhoneNumber, phoneDigits } from '@/utils/phone';
+import { secureFileUrl } from '@/utils/secureFileUrl';
 
 const editableSections = new Set(['employment-history', 'education', 'licenses', 'attachments']);
 
@@ -153,10 +154,8 @@ function displayValue(value: unknown, fieldKey?: string): string {
   return '';
 }
 
-function documentUrl(value: string) {
-  return /^https?:\/\//i.test(value)
-    ? value
-    : `${apiOrigin}${value.startsWith('/') ? '' : '/'}${value}`;
+function documentUrl(value: string, token?: string | null) {
+  return secureFileUrl(value, token);
 }
 
 function SkeletonCard() {
@@ -279,7 +278,7 @@ export default function ProfileDetailsScreen() {
     };
   }, [loadSection]));
 
-  const profileImage = profile?.dp ? documentUrl(profile.dp) : null;
+  const profileImage = profile?.dp ? documentUrl(profile.dp, token) : null;
   const imageHeaders = (() => {
     if (!profileImage || !token) return undefined;
     try {

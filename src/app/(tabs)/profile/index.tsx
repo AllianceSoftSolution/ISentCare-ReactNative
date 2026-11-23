@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
 import { SHARE_MESSAGE, SUPPORT_EMAIL, SUPPORT_MAILTO } from '@/constants/support';
 import useAuthStore from '@/store/authStore';
+import { secureFileUrl } from '@/utils/secureFileUrl';
 
 type ProfileSummary = {
   first_name?: string;
@@ -37,10 +38,8 @@ function responseError(response: { status?: number; problem?: string; data?: unk
   return formatApiFailure(response, fallback);
 }
 
-function imageUrl(path: string) {
-  return /^https?:\/\//i.test(path)
-    ? path
-    : `${apiOrigin}${path.startsWith('/') ? '' : '/'}${path}`;
+function imageUrl(path: string, token?: string | null) {
+  return secureFileUrl(path, token);
 }
 
 function imageHeaders(image: string | null, token: string | null) {
@@ -162,7 +161,7 @@ export default function ProfileScreen() {
   };
 
   const displayName = [profile?.first_name, profile?.last_name].filter(Boolean).join(' ') || 'Professional';
-  const profileImage = profile?.dp ? imageUrl(profile.dp) : null;
+  const profileImage = profile?.dp ? imageUrl(profile.dp, token) : null;
   const headers = imageHeaders(profileImage, token);
 
   return (

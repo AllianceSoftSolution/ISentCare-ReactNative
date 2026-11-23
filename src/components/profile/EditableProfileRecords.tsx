@@ -1,4 +1,3 @@
-import { apiOrigin } from '@/api/apiClient';
 import {
   createEducation,
   createEmployment,
@@ -66,7 +65,9 @@ import {
   US_PHONE_INPUT_MAX_LENGTH,
 } from '@/utils/phone';
 import { eevPathMismatchMessage } from '@/utils/eevDocuments';
+import { secureFileUrl } from '@/utils/secureFileUrl';
 import type { SelectedUpload } from '@/utils/upload';
+import useAuthStore from '@/store/authStore';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { useFocusEffect } from 'expo-router';
@@ -105,9 +106,7 @@ const fieldColors = {
 };
 
 function documentUrl(value: string) {
-  return /^https?:\/\//i.test(value)
-    ? value
-    : `${apiOrigin}${value.startsWith('/') ? '' : '/'}${value}`;
+  return secureFileUrl(value, useAuthStore.getState().token);
 }
 
 function fileName(value: string) {

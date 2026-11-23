@@ -34,6 +34,7 @@ import {
 } from '@/store/accountSettingsCache';
 import useAuthStore from '@/store/authStore';
 import { formatPhoneNumber } from '@/utils/phone';
+import { secureFileUrl } from '@/utils/secureFileUrl';
 import type { SelectedUpload } from '@/utils/upload';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -84,10 +85,8 @@ const fieldColors = {
   textColor: '#263341',
 };
 
-function imageUrl(path: string) {
-  return /^https?:\/\//i.test(path)
-    ? path
-    : `${apiOrigin}${path.startsWith('/') ? '' : '/'}${path}`;
+function imageUrl(path: string, token?: string | null) {
+  return secureFileUrl(path, token);
 }
 
 function imageHeaders(image: string | null, token: string | null) {
@@ -521,7 +520,7 @@ export default function AccountSettingsScreen() {
   };
 
   const currentPhoto = photo?.uri
-    || (profile?.dp ? imageUrl(profile.dp) : null);
+    || (profile?.dp ? imageUrl(profile.dp, token) : null);
   const headers = photo ? undefined : imageHeaders(currentPhoto, token);
   const displayName = [profile?.first_name, profile?.last_name].filter(Boolean).join(' ') || 'Professional';
 
