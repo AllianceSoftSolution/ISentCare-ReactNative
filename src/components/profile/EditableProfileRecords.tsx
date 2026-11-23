@@ -65,6 +65,7 @@ import {
   US_PHONE_ERROR,
   US_PHONE_INPUT_MAX_LENGTH,
 } from '@/utils/phone';
+import { eevPathMismatchMessage } from '@/utils/eevDocuments';
 import type { SelectedUpload } from '@/utils/upload';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
@@ -818,12 +819,11 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
   };
 
   const saveEevDocuments = async () => {
-    if (!eevCategory) {
+    const eevMismatch = eevPathMismatchMessage(eevDocPath, eevCategory, eevSecondCategory);
+    if (eevMismatch || !eevCategory) {
       Alert.alert(
         'Missing document type',
-        eevDocPath === 'IA'
-          ? 'Select a document type that establishes both identity and employment eligibility.'
-          : 'Select an identity document type.',
+        eevMismatch || 'Select an employment eligibility document type.',
       );
       return;
     }
@@ -832,10 +832,6 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
         'Missing file',
         eevDocPath === 'IA' ? 'Upload the selected document.' : 'Upload the identity document.',
       );
-      return;
-    }
-    if (eevDocPath === 'BC' && !eevSecondCategory) {
-      Alert.alert('Missing document type', 'Select an employment authorization document type.');
       return;
     }
     if (eevDocPath === 'BC' && !eevSecondFile) {

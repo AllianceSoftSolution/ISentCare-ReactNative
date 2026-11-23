@@ -22,6 +22,7 @@ import {
 import { SignaturePad, type SignatureStrokes } from '@/components/ui/SignaturePad';
 import { Colors, Spacing } from '@/constants/theme';
 import useAuthStore from '@/store/authStore';
+import { eevPathMismatchMessage } from '@/utils/eevDocuments';
 import {
   formatPhoneNumber,
   isValidUsPhone,
@@ -1089,12 +1090,9 @@ export default function OnboardingScreen() {
         return;
       case 'eligibility': {
         const formattedWorkAuthorizationExpiry = normalizeApiDate(workAuthorizationExpiry);
-        if (!eevCategory) {
-          throw new Error(
-            eevDocPath === 'IA'
-              ? 'Select a document type that establishes both identity and employment eligibility.'
-              : 'Select an identity document type.',
-          );
+        const eevMismatch = eevPathMismatchMessage(eevDocPath, eevCategory, eevSecondCategory);
+        if (eevMismatch || !eevCategory) {
+          throw new Error(eevMismatch || 'Select an employment eligibility document type.');
         }
         if (!eevFile) {
           throw new Error(
@@ -1102,9 +1100,6 @@ export default function OnboardingScreen() {
               ? 'Upload the selected document.'
               : 'Upload the identity document.',
           );
-        }
-        if (eevDocPath === 'BC' && !eevSecondCategory) {
-          throw new Error('Select an employment authorization document type.');
         }
         if (eevDocPath === 'BC' && !eevSecondFile) {
           throw new Error('Upload the employment authorization document.');
@@ -1247,22 +1242,14 @@ export default function OnboardingScreen() {
       return;
     }
     if (section === 'eligibility') {
-      if (!eevCategory) {
-        throw new Error(
-          eevDocPath === 'IA'
-            ? 'Select a document type that establishes both identity and employment eligibility.'
-            : 'Select an identity document type.',
-        );
-      }
+      const eevMismatch = eevPathMismatchMessage(eevDocPath, eevCategory, eevSecondCategory);
+      if (eevMismatch) throw new Error(eevMismatch);
       if (!eevFile) {
         throw new Error(
           eevDocPath === 'IA'
             ? 'Upload the selected document.'
             : 'Upload the identity document.',
         );
-      }
-      if (eevDocPath === 'BC' && !eevSecondCategory) {
-        throw new Error('Select an employment authorization document type.');
       }
       if (eevDocPath === 'BC' && !eevSecondFile) {
         throw new Error('Upload the employment authorization document.');

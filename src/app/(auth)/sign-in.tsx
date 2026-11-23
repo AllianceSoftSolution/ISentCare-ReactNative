@@ -58,11 +58,8 @@ export default function LoginScreen() {
         // Email verified but onboarding not finished yet.
         router.replace('/(auth)/onboarding');
       } else if (session === 'pending') {
-        // Application submitted; wait for admin approval before allowing access.
-        await clearSession();
-        throw new Error(
-          'Your account is awaiting administrator approval. You can sign in after an administrator verifies your account.',
-        );
+        // Authenticated but awaiting admin verification — same gate as splash.
+        router.replace('/(auth)/onboarding');
       } else {
         await clearSession();
         throw new Error('Your session could not be verified. Please sign in again.');

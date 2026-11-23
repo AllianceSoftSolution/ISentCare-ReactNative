@@ -230,7 +230,7 @@ export default function AccountSettingsScreen() {
           response.problem === 'NETWORK_ERROR'
             || response.problem === 'TIMEOUT_ERROR'
             || response.problem === 'CONNECTION_ERROR'
-            ? 'Unable to reach the server. Make sure the API is running and try again.'
+            ? networkReachabilityMessage()
             : 'Unable to load states. Please try again.',
         );
       }

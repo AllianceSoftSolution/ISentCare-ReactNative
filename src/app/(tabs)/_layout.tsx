@@ -16,13 +16,15 @@ export default function TabsLayout() {
 
   useEffect(() => {
     let active = true;
-    void restoreSession()
+    // Always revalidate against the server so revoked/unverified accounts are not
+    // admitted from a stale in-memory "verified" status.
+    void restoreSession(true)
       .then((status) => {
         if (!active) return;
         if (status === 'verified') {
           setReady(true);
         } else if (status === 'signedOut') {
-          router.replace('/(auth)/sign-in');
+          router.replace('/(auth)/get-started');
         } else {
           router.replace('/(auth)/onboarding');
         }
@@ -31,12 +33,12 @@ export default function TabsLayout() {
         if (!active) return;
         const message =
           sessionError instanceof Error ? sessionError.message : 'Unable to check your account.';
-        // Never paint raw HTML / login pages into the guard UI.
-        if (/<\s*(!doctype|html|head|body)\b/i.test(message)) {
-          router.replace('/(auth)/sign-in');
-          return;
-        }
-        setError(message);
+        // Never paint raw HTML into the guard UI, and do not treat it as sign-out.
+        setError(
+          /<\s*(!doctype|html|head|body)\b/i.test(message)
+            ? 'Unable to reach IsentCare. Check your internet connection and try again.'
+            : message,
+        );
       });
 
     return () => {

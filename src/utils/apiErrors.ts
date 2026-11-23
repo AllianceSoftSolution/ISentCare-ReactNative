@@ -10,6 +10,7 @@ export function looksLikeHtml(value: unknown): boolean {
   );
 }
 
+/** Only HTTP 401 proves the JWT is invalid; 403 may be permission/HTML gateway noise. */
 export function isAuthFailureStatus(status?: number | null): boolean {
-  return status === 401 || status === 403;
+  return status === 401;
 }

@@ -2,7 +2,6 @@ import apiClient, { setAuthToken } from '@/api/apiClient';
 import type { LoginResult } from '@/api/auth';
 import { formatApiFailure } from '@/api/work';
 import useAuthStore, { type SessionStatus } from '@/store/authStore';
-import { looksLikeHtml } from '@/utils/apiErrors';
 import { deleteStorageItem, getStorageItem, setStorageItem } from '@/utils/storage';
 
 const ACCESS_TOKEN_KEY = 'accessToken';
@@ -64,18 +63,27 @@ export async function clearSession() {
   useAuthStore.getState().logout();
   setAuthToken(null);
   // Drop in-memory caches so the next account cannot see prior data.
-  void import('@/store/profileRecordsCache').then(({ invalidateProfileRecordsCache }) => {
-    invalidateProfileRecordsCache();
-  });
-  void import('@/store/accountSettingsCache').then(({ invalidateAccountSettingsCache }) => {
-    invalidateAccountSettingsCache();
-  });
-  void import('@/store/workListCache').then(({ invalidateWorkListCache }) => {
-    invalidateWorkListCache();
-  });
-  void import('@/store/notificationBadgeStore').then((mod) => {
-    mod.default.getState().setCount(0);
-  });
+  // Catch import failures (e.g. Jest without ESM dynamic import) so sign-out still completes.
+  void import('@/store/profileRecordsCache')
+    .then(({ invalidateProfileRecordsCache }) => {
+      invalidateProfileRecordsCache();
+    })
+    .catch(() => undefined);
+  void import('@/store/accountSettingsCache')
+    .then(({ invalidateAccountSettingsCache }) => {
+      invalidateAccountSettingsCache();
+    })
+    .catch(() => undefined);
+  void import('@/store/workListCache')
+    .then(({ invalidateWorkListCache }) => {
+      invalidateWorkListCache();
+    })
+    .catch(() => undefined);
+  void import('@/store/notificationBadgeStore')
+    .then((mod) => {
+      mod.default.getState().setCount(0);
+    })
+    .catch(() => undefined);
 }
 
 export async function restoreSession(force = false): Promise<SessionStatus> {
@@ -84,12 +92,13 @@ export async function restoreSession(force = false): Promise<SessionStatus> {
     !force &&
     (store.sessionStatus === 'verified' ||
       store.sessionStatus === 'incomplete' ||
-      store.sessionStatus === 'pending' ||
-      store.sessionStatus === 'signedOut')
+      store.sessionStatus === 'pending')
   ) {
     return store.sessionStatus;
   }
 
+  // Never trust a cached signedOut without re-reading secure storage — login()
+  // may clear the in-memory token while a prior accessToken is still on disk.
   store.setSessionStatus('checking');
   try {
     const token = await readAccessToken();
@@ -102,7 +111,9 @@ export async function restoreSession(force = false): Promise<SessionStatus> {
     setAuthToken(token);
     const response = await apiClient.get<{ verified?: unknown }>('/users/my_profile/');
     if (!response.ok) {
-      if (response.status === 401 || looksLikeHtml(response.data)) {
+      // Only a true auth failure should wipe credentials. Gateway/5xx HTML pages
+      // must not sign the professional out.
+      if (response.status === 401) {
         await clearSession();
         return 'signedOut';
       }

@@ -28,7 +28,8 @@ export function isBreakDeductionEligible(
     : typeof localPunchInAtMs === 'number' && Number.isFinite(localPunchInAtMs)
       ? localPunchInAtMs
       : null;
-  if (startMs === null) return true;
+  // Fail closed: without a known punch-in time, do not offer/claim a break deduction.
+  if (startMs === null) return false;
   return nowMs - startMs >= BREAK_DEDUCTION_MIN_MS;
 }
 

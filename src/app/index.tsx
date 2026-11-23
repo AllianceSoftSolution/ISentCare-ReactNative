@@ -20,7 +20,7 @@ export default function StartupScreen() {
         if (status === 'verified') {
           router.replace('/(tabs)/home');
         } else if (status === 'signedOut') {
-          router.replace('/(auth)/sign-in');
+          router.replace('/(auth)/get-started');
         } else {
           router.replace('/(auth)/onboarding');
         }
@@ -30,11 +30,13 @@ export default function StartupScreen() {
           initializationError instanceof Error
             ? initializationError.message
             : 'Unable to check your session. Please try again.';
-        if (/<\s*(!doctype|html|head|body)\b/i.test(message)) {
-          router.replace('/(auth)/sign-in');
-          return;
-        }
-        setError(message);
+        // Unexpected HTML in an error message is a server/proxy failure, not proof
+        // the user is signed out — keep them on splash with retry.
+        setError(
+          /<\s*(!doctype|html|head|body)\b/i.test(message)
+            ? 'Unable to reach IsentCare. Check your internet connection and try again.'
+            : message,
+        );
       }
     };
 

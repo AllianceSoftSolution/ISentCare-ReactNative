@@ -111,8 +111,11 @@ function responseFieldErrors(data: unknown): Partial<Record<string, string>> {
 
 export async function login(email: string, password: string): Promise<LoginResult> {
   // Ensure login is a clean unauthenticated JWT request (avoids CSRF from stale sessions).
+  // Do not mark sessionStatus as signedOut here — that soft-locks restoreSession when a
+  // prior accessToken is still in secure storage and login fails.
   setAuthToken(null);
-  useAuthStore.getState().logout();
+  useAuthStore.getState().setToken(null);
+  useAuthStore.getState().setSessionStatus('unknown');
 
   const response = await apiClient.post('/users/login/', {
     email: email.trim(),

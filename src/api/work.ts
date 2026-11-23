@@ -103,8 +103,14 @@ export function formatApiFailure(
     // not only when the device has no internet, and not only for a local API.
     return getErrorMessage(response.data, networkReachabilityMessage(response.problem));
   }
-  if (response.status === 401 || (response.status === 403 && looksLikeHtml(response.data)) || looksLikeHtml(response.data)) {
+  if (response.status === 401) {
     return 'Your session has expired. Please sign in again.';
+  }
+  if (looksLikeHtml(response.data)) {
+    return getErrorMessage(
+      response.data,
+      'The server returned an unexpected response. Please try again.',
+    );
   }
   return getErrorMessage(response.data, fallback);
 }

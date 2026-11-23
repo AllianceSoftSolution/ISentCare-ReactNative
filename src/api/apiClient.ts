@@ -1,6 +1,5 @@
 import { create } from 'apisauce';
 import useAuthStore from '../store/authStore';
-import { isAuthFailureStatus, looksLikeHtml } from '@/utils/apiErrors';
 
 const configuredBaseURL = (
   typeof process !== 'undefined' ? process.env?.EXPO_PUBLIC_API_BASE_URL : undefined
@@ -73,15 +72,9 @@ for (const client of [apiClient, professionalApiClient]) {
 
   client.addResponseTransform((response) => {
     const hadToken = Boolean(useAuthStore.getState().token);
-    const htmlBody = looksLikeHtml(response.data);
-    const authLost =
-      hadToken
-      && (
-        response.status === 401
-        || (response.status === 403 && htmlBody)
-        || (htmlBody && isAuthFailureStatus(response.status))
-      );
-    if (authLost) {
+    // Only clear the session on HTTP 401. HTML 403/5xx gateway pages are not
+    // proof that the JWT is invalid and must not force sign-out mid-flow.
+    if (hadToken && response.status === 401) {
       void forceSignOutToLogin();
     }
   });

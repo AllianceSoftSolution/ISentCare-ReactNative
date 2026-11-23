@@ -63,6 +63,8 @@ export default function HomeScreen() {
   } | null>(null);
   const requestId = useRef(0);
   const actionBusy = useRef(false);
+  /** When true, runShiftAction left busy held for the break dialog. */
+  const holdBusyForBreak = useRef(false);
   const countsRequestId = useRef(0);
   /** Local punch-in timestamps by application id (fallback before todayShifts refresh). */
   const localPunchInAt = useRef<Record<number, number>>({});
@@ -130,6 +132,17 @@ export default function HomeScreen() {
     }, [loadShifts, loadCounts]),
   );
 
+  const releaseBusy = () => {
+    holdBusyForBreak.current = false;
+    actionBusy.current = false;
+    setBusyApplicationId(null);
+  };
+
+  const dismissBreakPrompt = () => {
+    setBreakPrompt(null);
+    releaseBusy();
+  };
+
   const finishPunchOut = async (
     prompt: BreakPrompt,
     tookBreak: boolean,
@@ -137,10 +150,12 @@ export default function HomeScreen() {
   ) => {
     if (prompt.shift.shift === null) return;
     if (!options?.alreadyBusy) {
-      if (actionBusy.current) return;
+      // Break dialog keeps the action lock; allow its buttons through.
+      if (actionBusy.current && !holdBusyForBreak.current) return;
       actionBusy.current = true;
       setBusyApplicationId(prompt.shift.id);
     }
+    holdBusyForBreak.current = false;
     setBreakPrompt(null);
     const breakEligible = isBreakDeductionEligible(
       prompt.shift,
@@ -185,8 +200,7 @@ export default function HomeScreen() {
         canOpenSettings: actionError instanceof ShiftLocationError && actionError.canOpenSettings,
       });
     } finally {
-      actionBusy.current = false;
-      setBusyApplicationId(null);
+      releaseBusy();
     }
   };
 
@@ -229,13 +243,16 @@ export default function HomeScreen() {
         if (
           isBreakDeductionEligible(shift, localPunchInAt.current[shift.id])
         ) {
+          // Keep busy until the break dialog finishes so Start/End cannot be double-tapped.
+          holdBusyForBreak.current = true;
           setBreakPrompt(prompt);
-        } else {
-          await finishPunchOut(prompt, false, { alreadyBusy: true });
           return;
         }
+        await finishPunchOut(prompt, false, { alreadyBusy: true });
+        return;
       }
     } catch (actionError) {
+      holdBusyForBreak.current = false;
       const message = mutationConflictMessage(
         actionError,
         mode === 'start'
@@ -257,6 +274,8 @@ export default function HomeScreen() {
         canOpenSettings: actionError instanceof ShiftLocationError && actionError.canOpenSettings,
       });
     } finally {
+      // Break prompt owns the busy lock until finishPunchOut / dismiss.
+      if (holdBusyForBreak.current) return;
       actionBusy.current = false;
       setBusyApplicationId(null);
     }
@@ -414,9 +433,12 @@ export default function HomeScreen() {
         animationType="fade"
         visible={confirming !== null || breakPrompt !== null || notice !== null}
         onRequestClose={() => {
-          if (actionBusy.current) return;
+          if (confirming && actionBusy.current) return;
+          if (breakPrompt) {
+            dismissBreakPrompt();
+            return;
+          }
           setConfirming(null);
-          setBreakPrompt(null);
           setNotice(null);
         }}>
         <View style={styles.modalOverlay}>
@@ -462,15 +484,13 @@ export default function HomeScreen() {
                   <Pressable
                     accessibilityRole="button"
                     style={styles.noBreakButton}
-                    disabled={busyApplicationId !== null}
-                    onPress={() => void finishPunchOut(breakPrompt, false)}>
+                    onPress={() => void finishPunchOut(breakPrompt, false, { alreadyBusy: true })}>
                     <Text style={styles.noBreakButtonText}>I didn’t take a break</Text>
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
                     style={styles.confirmButton}
-                    disabled={busyApplicationId !== null}
-                    onPress={() => void finishPunchOut(breakPrompt, true)}>
+                    onPress={() => void finishPunchOut(breakPrompt, true, { alreadyBusy: true })}>
                     <Text style={styles.confirmButtonText}>OK</Text>
                   </Pressable>
                 </View>
