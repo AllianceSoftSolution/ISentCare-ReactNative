@@ -65,13 +65,13 @@ import {
   US_PHONE_INPUT_MAX_LENGTH,
 } from '@/utils/phone';
 import { eevPathMismatchMessage } from '@/utils/eevDocuments';
+import { openSecureDocument } from '@/utils/openSecureDocument';
 import { secureFileUrl } from '@/utils/secureFileUrl';
 import type { SelectedUpload } from '@/utils/upload';
 import useAuthStore from '@/store/authStore';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { useFocusEffect } from 'expo-router';
-import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useRef, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
@@ -355,9 +355,15 @@ export function EditableProfileRecords({ section, onBusyChange }: EditableProfil
 
   const openDocument = async (path: string) => {
     try {
-      await WebBrowser.openBrowserAsync(documentUrl(path));
+      setBusy(true);
+      setError(null);
+      await openSecureDocument(path);
     } catch (openError) {
-      setError(openError instanceof Error ? openError.message : 'Unable to open document.');
+      const message = openError instanceof Error ? openError.message : 'Unable to open document.';
+      setError(message);
+      Alert.alert('Unable to open document', message);
+    } finally {
+      setBusy(false);
     }
   };
 

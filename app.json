@@ -64,7 +64,8 @@
           "locationWhenInUsePermission": "Allow IsentCare to use your current location for registration and to verify your location when you start a shift."
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-sharing"
     ],
     "experiments": {
       "typedRoutes": true,
