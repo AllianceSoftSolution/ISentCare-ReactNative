@@ -19,6 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { Spacing } from '@/constants/theme';
+import { routeForSessionStatus } from '@/utils/sessionRouting';
 
 const PRIMARY = '#1d66a5';
 const LOGO_ASPECT_RATIO = 1280 / 313;
@@ -52,14 +53,10 @@ export default function LoginScreen() {
       const data = await login(email, password);
       await saveSessionTokens(data);
       const session = await restoreSession(true);
-      if (session === 'verified') {
-        router.replace('/(tabs)/home');
-      } else if (session === 'incomplete') {
-        // Email verified but onboarding not finished yet.
-        router.replace('/(auth)/onboarding');
-      } else if (session === 'pending') {
-        // Authenticated but awaiting admin verification — same gate as splash.
-        router.replace('/(auth)/onboarding');
+      const route = routeForSessionStatus(session);
+      if (route === '/(tabs)/home' || route === '/(auth)/onboarding') {
+        // verified → main app; pending/incomplete → employment/license onboarding gate
+        router.replace(route);
       } else {
         await clearSession();
         throw new Error('Your session could not be verified. Please sign in again.');

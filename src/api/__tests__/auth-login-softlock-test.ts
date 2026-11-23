@@ -1,3 +1,5 @@
+/* eslint-disable import/first -- jest.mock must run before module under test */
+
 const mockPost = jest.fn();
 const mockSetAuthToken = jest.fn();
 

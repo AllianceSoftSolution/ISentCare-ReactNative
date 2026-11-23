@@ -7,6 +7,7 @@ import { restoreSession } from '@/api/session';
 import { NotificationBell } from '@/components/ui/NotificationBell';
 import { FORM_PRIMARY } from '@/components/ui/RegistrationFields';
 import { Skeleton, SkeletonLines } from '@/components/ui/Skeleton';
+import { routeForSessionStatus } from '@/utils/sessionRouting';
 
 export default function TabsLayout() {
   const router = useRouter();
@@ -23,11 +24,10 @@ export default function TabsLayout() {
         if (!active) return;
         if (status === 'verified') {
           setReady(true);
-        } else if (status === 'signedOut') {
-          router.replace('/(auth)/get-started');
-        } else {
-          router.replace('/(auth)/onboarding');
+          return;
         }
+        const route = routeForSessionStatus(status) ?? '/(auth)/onboarding';
+        router.replace(route);
       })
       .catch((sessionError: unknown) => {
         if (!active) return;

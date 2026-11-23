@@ -2,6 +2,7 @@
  * Integration-style tests for restoreSession auth vs HTML/gateway failures.
  * Storage and API client are mocked; auth store is real.
  */
+/* eslint-disable import/first -- jest.mock must run before module under test */
 
 const mockGet = jest.fn();
 const mockGetStorageItem = jest.fn();

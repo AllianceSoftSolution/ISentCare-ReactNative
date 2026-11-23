@@ -3,6 +3,7 @@ import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'rea
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { restoreSession } from '@/api/session';
+import { routeForSessionStatus } from '@/utils/sessionRouting';
 
 export default function StartupScreen() {
   const router = useRouter();
@@ -17,13 +18,8 @@ export default function StartupScreen() {
         const status = await restoreSession(true);
         await minimumSplashTime;
         if (!active) return;
-        if (status === 'verified') {
-          router.replace('/(tabs)/home');
-        } else if (status === 'signedOut') {
-          router.replace('/(auth)/get-started');
-        } else {
-          router.replace('/(auth)/onboarding');
-        }
+        const route = routeForSessionStatus(status) ?? '/(auth)/onboarding';
+        router.replace(route);
       } catch (initializationError) {
         if (!active) return;
         const message =
